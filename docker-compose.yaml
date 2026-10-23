@@ -1,0 +1,119 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: lunalexia
+      POSTGRES_USER: lunalexia
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lunalexia-dev}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      sentia_network:
+        aliases:
+          - luna-lexia-db
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lunalexia -d lunalexia"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mcp:
+    build: ./mcp
+    working_dir: /workspace/mcp
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://lunalexia:${POSTGRES_PASSWORD:-lunalexia-dev}@luna-lexia-db:5432/lunalexia
+      DOCUMENT_DIR: /data/documents
+      OLLAMA_URL: ${OLLAMA_URL:-http://luna-sentia-ollama:11434}
+      DOCUMENT_MODEL: ${DOCUMENT_MODEL:-qwen2.5vl:7b}
+      LUNALEXIA_PUBLIC_BASE_URL: ${LUNALEXIA_PUBLIC_BASE_URL:-}
+      MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-http://localhost:18004}
+      LUNALEXIA_API_TOKEN: ${LUNALEXIA_API_TOKEN:?Set LUNALEXIA_API_TOKEN to a private random value of at least 32 characters}
+    expose:
+      - "8000"
+    ports:
+      - "127.0.0.1:18004:8000"
+    volumes:
+      - document_data:/data/documents
+      - download_data:/data/downloads
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./mcp
+          target: /workspace/mcp
+          ignore:
+            - __pycache__/
+            - "*.py[cod]"
+            - .pytest_cache/
+            - tests/
+            - requirements.txt
+            - Dockerfile
+        - action: rebuild
+          path: ./mcp/requirements.txt
+        - action: rebuild
+          path: ./mcp/Dockerfile
+    networks:
+      sentia_network:
+        aliases:
+          - luna-lexia-mcp
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  ui:
+    build: ./ui
+    working_dir: /workspace/ui
+    restart: unless-stopped
+    environment:
+      DOCUMENT_DIR: /data/documents
+      LUNALEXIA_API_URL: http://luna-lexia-mcp:8000
+      LUNALEXIA_API_TOKEN: ${LUNALEXIA_API_TOKEN:?Set LUNALEXIA_API_TOKEN to a private random value of at least 32 characters}
+      LUNALEXIA_ALLOWED_EMAILS: ${LUNALEXIA_ALLOWED_EMAILS:?Set LUNALEXIA_ALLOWED_EMAILS to the Google accounts allowed to access Lexia}
+    ports:
+      - "127.0.0.1:18505:8501"
+    volumes:
+      - document_data:/data/documents:ro
+      - ./ui/.streamlit/secrets.toml:/workspace/ui/.streamlit/secrets.toml:ro
+    develop:
+      watch:
+        - action: sync
+          path: ./ui
+          target: /workspace/ui
+          ignore:
+            - __pycache__/
+            - "*.py[cod]"
+            - .pytest_cache/
+            - requirements.txt
+            - Dockerfile
+            - .streamlit/secrets.toml
+        - action: rebuild
+          path: ./ui/requirements.txt
+        - action: rebuild
+          path: ./ui/Dockerfile
+    networks:
+      sentia_network:
+        aliases:
+          - luna-lexia-ui
+    depends_on:
+      mcp:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+    name: luna_lexia_postgres_data
+  document_data:
+    name: luna_lexia_document_data
+  download_data:
+    name: luna_lexia_download_data
+
+networks:
+  sentia_network:
+    external: true
+    name: luna_sentia_network

@@ -1,0 +1,6 @@
+Authlib==1.5.2
+streamlit==1.49.1
+st-img-selector==0.0.2
+httpx==0.28.1
+pypdfium2==5.14.0
+Pillow==11.3.0

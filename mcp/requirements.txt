@@ -1,0 +1,10 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+mcp==1.30.0
+pydantic==2.14.1
+pydantic-ai-slim==2.60.0
+docling==2.142.1
+torch==2.14.1+cpu
+pypdfium2==5.14.0
+Pillow==11.3.0
+psycopg[binary]==3.2.10
+httpx==0.28.1
