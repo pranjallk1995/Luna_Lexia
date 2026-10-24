@@ -111,15 +111,6 @@ RenameRequests = Annotated[
 DocTypes = list[DocTypeName] | None
 
 
-class DriveFileRequest(BaseModel):
-    """One Drive file to import, with its PDF password when it has one."""
-
-    file_id: str
-    password: str | None = None
-    doc_type: str | None = None
-    name: str | None = None
-
-
 class UploadItem(BaseModel):
     """One document in a bulk upload: exactly one source, plus optional hints."""
 
@@ -133,26 +124,6 @@ class UploadItem(BaseModel):
     password: str | None = None
     doc_type: str | None = None
 
-
-DriveFileRequests = Annotated[
-    list[DriveFileRequest],
-    WithJsonSchema(
-        {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "file_id": {"type": "string"},
-                    "password": {"type": "string"},
-                    "doc_type": {"type": "string"},
-                    "name": {"type": "string"},
-                },
-                "required": ["file_id"],
-            },
-            "description": "Drive files to import, each with an optional PDF password, doc_type, and name.",
-        }
-    ),
-]
 
 UploadItems = Annotated[
     list[UploadItem],
@@ -417,7 +388,7 @@ class LexiaMCPTools:
             return await offload(self.preview, names)
 
     def _register_import_tools(self) -> None:
-        server, imports, downloads = self.server, self.service.imports, self.service.downloads
+        server, imports = self.server, self.service.imports
 
         @server.tool()
         def google_drive_status() -> dict[str, Any]:
@@ -452,22 +423,14 @@ class LexiaMCPTools:
             return await offload(imports.import_drive_folder, folder, recursive, doc_type)
 
         @server.tool()
-        async def import_drive_files(files: DriveFileRequests) -> dict[str, Any]:
-            """Import specific Google Drive files by ID, as a background job.
-
-            Use it to retry files a folder import reported as needs_password, with
-            their passwords, or to import a few files without a whole folder.
-            """
-            return await offload(imports.import_drive_files, [file.model_dump() for file in files])
-
-        @server.tool()
         async def upload_documents(items: UploadItems) -> dict[str, Any]:
             """Upload many documents at once, as a background job.
 
             Each item has exactly one source: file (a chat attachment),
             document_url, content_base64, or drive_file_id, plus an optional name,
             password, and doc_type. Each file is classified and extracted like
-            upload_document; follow the job with get_import_job.
+            upload_document; follow the job with get_import_job. To retry Drive
+            files reported as needs_password, pass their drive_file_id with the password.
             """
             payload = [
                 {**item.model_dump(exclude={"file"}), "file": item.file.model_dump() if item.file else None}
@@ -479,8 +442,8 @@ class LexiaMCPTools:
         async def get_import_job(job_id: str, include_files: bool = True) -> dict[str, Any]:
             """Report an import job's progress and each file's outcome.
 
-            status is queued, listing, running, done, failed, or interrupted (by a
-            restart). outcomes counts imported, duplicate (already in Lexia),
+            status is queued, listing, running, done, or failed; a job a restart cut
+            off resumes by itself at the file it was on. outcomes counts imported, duplicate (already in Lexia),
             skipped (imported before, unchanged), needs_password, unsupported,
             and failed files; each file lists its name, Drive path, outcome, the
             Lexia document_name it became, and any error.
@@ -491,22 +454,6 @@ class LexiaMCPTools:
         async def list_import_jobs(limit: int = 10) -> dict[str, Any]:
             """List recent import jobs, newest first, with their progress."""
             return {"jobs": await offload(imports.jobs_list, limit)}
-
-        @server.tool()
-        async def download_documents(
-            names: list[str] | None = None,
-            doc_types: DocTypes = None,
-            financial_year: str | None = None,
-            tags: list[str] | None = None,
-        ) -> dict[str, Any]:
-            """Download many visible documents as one ZIP: by names, or every document of the
-            given doc_types, financial_year, and tags (all must match).
-
-            Returns a download_url valid for 24 hours (at most 200 documents, 2 GiB);
-            give it to the user exactly as returned.
-            """
-            MetadataRules.require_lowercase_tags(tags, "tags")
-            return await offload(downloads.create_zip_for, names, doc_types, financial_year, tags)
 
     def _register_mutation_tools(self) -> None:
         server, visible, sources, uploads = (

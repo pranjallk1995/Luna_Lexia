@@ -44,7 +44,6 @@ class DocumentGallery:
         SessionState.clear_pending_actions({path.name for path in collection.documents})
         favorite_names = self.actions.favorite_names()
         generation = st.session_state.view_generation
-        self._render_bulk_download(collection.documents)
         page, page_documents = self.pager.paginate(collection.documents)
         self.pager.render_transition_marker()
         render_page = self._render_list if SessionState.is_list_view() else self._render_grid
@@ -58,32 +57,6 @@ class DocumentGallery:
         if opened is not None:
             SessionState.bump_selector(opened.name)
             DocumentPreviewDialog(self.context, self.actions, collection.metadata_by_name).open(opened)
-
-    def _render_bulk_download(self, documents: list[Path]) -> None:
-        """Zip exactly the documents shown (after search), prepared on demand then downloaded."""
-        signature = tuple(path.name for path in documents)
-        prepared = st.session_state.get("bulk_zip")
-        _, button_column = st.columns([12, 1])
-        if prepared and prepared[0] == signature:
-            button_column.download_button(
-                ":material/download:",
-                data=prepared[1],
-                file_name="luna_lexia_documents.zip",
-                mime="application/zip",
-                help=f"Download these {len(documents)} documents as a ZIP",
-                key="bulk_zip_download",
-                on_click="ignore",
-                width="stretch",
-            )
-        elif button_column.button(
-            ":material/folder_zip:",
-            help=f"Prepare a ZIP of the {len(documents)} documents shown",
-            key="bulk_zip_prepare",
-            width="stretch",
-        ):
-            with st.spinner("Zipping documents..."):
-                st.session_state.bulk_zip = (signature, self.files.zip(documents))
-            st.rerun()
 
     # Layouts
 
@@ -261,14 +234,14 @@ class DocumentGallery:
             f"<span>{html.escape(fact)}</span>" for fact in facts if fact
         )
         review = (
-            '<span class="lv-review-flag" title="Some extracted details need review">'
-            "needs review</span>"
+            '<div class="lv-card-review"><span class="lv-review-flag" '
+            'title="Some extracted details need review">needs review</span></div>'
             if metadata.get("review_flags")
             else ""
         )
         container.markdown(
             f'<div class="lv-card-tags">{tag_html}</div>'
-            f'<div class="lv-card-facts">{fact_html}{review}</div>',
+            f'<div class="lv-card-facts">{fact_html}</div>{review}',
             unsafe_allow_html=True,
         )
 

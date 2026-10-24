@@ -787,24 +787,6 @@ class DocumentDownloadService:
             "names": [path.name for path in paths],
         }
 
-    def create_zip_for(
-        self,
-        names: list[str] | None = None,
-        doc_types: list[str] | None = None,
-        financial_year: str | None = None,
-        tags: list[str] | None = None,
-    ) -> dict[str, Any]:
-        """Zip documents chosen by name, or every document matching the type, year, and tags."""
-        if names:
-            return self.create_zip(names)
-        if not (doc_types or financial_year or tags):
-            raise ValueError("Choose documents by names, doc_types, financial_year, or tags.")
-        wanted = set(tags or [])
-        rows = [row for row in self.visible.list(doc_types, financial_year) if wanted <= set(row["tags"])]
-        if not rows:
-            raise FileNotFoundError("No visible documents match that selection.")
-        return self.create_zip([row["name"] for row in rows])
-
     def archive(self, token: str) -> tuple[DownloadTicket, Path]:
         """Return the live ticket and archive file for a download token."""
         return self.store.resolve(token), self.store.archive_path(token)

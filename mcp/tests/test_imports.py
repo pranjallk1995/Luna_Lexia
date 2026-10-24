@@ -1,4 +1,4 @@
-"""Tests for Google Drive imports, bulk uploads, and bulk downloads."""
+"""Tests for Google Drive imports and bulk uploads."""
 
 import base64
 import tempfile
@@ -234,7 +234,7 @@ class DriveFolderImportTests(ImportTestCase):
 
     def test_locked_files_can_be_retried_with_their_password(self):
         self.imports.import_drive_folder("Professional")
-        job = self.imports.import_drive_files([{"file_id": "f-lock", "password": LOCKED_PASSWORD}])
+        job = self.imports.upload_batch([{"drive_file_id": "f-lock", "password": LOCKED_PASSWORD}])
         self.assertEqual(self.outcomes(job), {"locked_slip.pdf": "imported"})
 
     def test_folder_problems_are_reported(self):
@@ -279,20 +279,6 @@ class BulkUploadTests(ImportTestCase):
         self.assertEqual([item["outcome"] for item in self.imports.job(str(job["job_id"]))["items"]], ["failed", "imported"])
 
 
-class BulkDownloadTests(ImportTestCase):
-    def test_zip_by_type_tags_or_names(self):
-        self.service.visible.ingest("march.pdf", base64.b64encode(payslip_pdf("m")).decode())
-        self.service.visible.ingest("form.pdf", base64.b64encode(payslip_pdf("f")).decode(), doc_type="form_16")
-        downloads = self.service.downloads
-        self.assertEqual(downloads.create_zip_for(doc_types=["payslip"])["names"], ["march.pdf"])
-        self.assertEqual(downloads.create_zip_for(tags=["form 16"])["names"], ["form.pdf"])
-        self.assertEqual(downloads.create_zip_for(names=["form.pdf", "march.pdf"])["document_count"], 2)
-        with self.assertRaisesRegex(ValueError, "Choose documents"):
-            downloads.create_zip_for()
-        with self.assertRaises(FileNotFoundError):
-            downloads.create_zip_for(financial_year="2001-02")
-
-
 class TransportTests(ImportTestCase):
     def setUp(self):
         super().setUp()
@@ -315,8 +301,8 @@ class TransportTests(ImportTestCase):
 
     def test_import_tools_are_registered(self):
         expected = {
-            "google_drive_status", "list_drive_folders", "import_drive_folder", "import_drive_files",
-            "upload_documents", "get_import_job", "list_import_jobs", "download_documents",
+            "google_drive_status", "list_drive_folders", "import_drive_folder",
+            "upload_documents", "get_import_job", "list_import_jobs",
         }
         self.assertTrue(expected <= self.tools, expected - self.tools)
 

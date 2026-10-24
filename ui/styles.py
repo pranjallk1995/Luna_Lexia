@@ -186,7 +186,9 @@ class LunaStyle:
             .lv-tag-5 { color:#67e8f9; background:rgba(8,145,178,.18); border-color:rgba(34,211,238,.22); }
             .lv-card-facts { display:flex; align-items:center; gap:.35rem; margin-bottom:1.5rem; color:var(--lv-muted); font-size:.7rem; white-space:nowrap; }
             .lv-card-facts { overflow:hidden; }
-            .lv-review-flag { margin-left:auto; flex:0 0 auto; padding:.05rem .45rem; border:1px solid rgba(251,191,36,.3); border-radius:999px; color:#fcd34d; background:rgba(217,119,6,.18); }
+            .lv-card-facts:has(+ .lv-card-review) { margin-bottom:.4rem; }
+            .lv-card-review { margin-bottom:1.5rem; font-size:.7rem; line-height:1.1rem; }
+            .lv-review-flag { display:inline-block; padding:.05rem .45rem; border:1px solid rgba(251,191,36,.3); border-radius:999px; color:#fcd34d; background:rgba(217,119,6,.18); }
             div[data-testid="stElementContainer"]:has(.lv-preview-details) { display:none!important; }
             div[data-testid="stVerticalBlockBorderWrapper"]:has(.lv-preview-details),
             div[data-testid="stVerticalBlockBorderWrapper"]:has(.lv-preview-details) > div {

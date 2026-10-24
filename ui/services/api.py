@@ -132,8 +132,8 @@ class LunaLexiaAPI:
             timeout=60.0,
         ).json()
 
-    def import_drive_files(self, files: list[dict[str, Any]]) -> dict[str, Any]:
-        return self.request("POST", "/api/imports/drive-files", json={"files": files}, timeout=60.0).json()
+    def upload_batch(self, items: list[dict[str, Any]]) -> dict[str, Any]:
+        return self.request("POST", "/api/imports/batch", json={"items": items}, timeout=60.0).json()
 
     def import_jobs(self, limit: int = 5) -> list[dict[str, Any]]:
         return self.request("GET", "/api/imports", params={"limit": limit}, timeout=10.0).json()["jobs"]

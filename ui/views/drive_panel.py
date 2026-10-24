@@ -171,7 +171,7 @@ class DriveImportPanel(LexiaTab):
             width="stretch",
         ):
             try:
-                self.api.import_drive_files([{"file_id": item["source_id"], "password": password} for item in locked])
+                self.api.upload_batch([{"drive_file_id": item["source_id"], "password": password} for item in locked])
             except httpx.HTTPError as error:
                 st.error(LunaLexiaAPI.error_message(error, "Could not retry the locked PDFs."))
                 return

@@ -378,19 +378,6 @@ class ImportService:
                    "max_items": self.max_items}
         return self.jobs.submit("drive_folder", f"{target['name']} ({target['folder_id']})", request)
 
-    def import_drive_files(self, files: list[dict[str, Any]]) -> Row:
-        """Queue specific Drive files, each with an optional password and doc_type."""
-        self._check_count(len(files))
-        if not files or any(not entry.get("file_id") for entry in files):
-            raise ValueError("Give each Drive file as an object with a file_id.")
-        self.drive()
-        items = [
-            {"drive_file_id": entry["file_id"], "password": entry.get("password"), "doc_type": entry.get("doc_type"),
-             "name": entry.get("name")}
-            for entry in files
-        ]
-        return self.jobs.submit("drive_files", f"{len(items)} Drive file(s)", {"items": items})
-
     def upload_batch(self, items: list[dict[str, Any]]) -> Row:
         """Queue many uploads from attachments, URLs, Base64, or Drive file IDs."""
         if not items:

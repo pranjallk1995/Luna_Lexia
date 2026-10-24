@@ -314,15 +314,13 @@ and files already imported are skipped.
 - `rename_document` / `rename_documents` - rename while keeping the immutable ID and public URL.
 - `set_favorite_documents`, `remove_document`, `backfill_documents`, `set_public_base_url`.
 
-### Bulk import and download
+### Bulk import
 
 - `google_drive_status` - whether Drive is configured and connected, and the connected account.
 - `list_drive_folders` - subfolders of My Drive or of a `parent_id`.
 - `import_drive_folder` - import a folder given as a link, ID, or exact name, optionally `recursive` and with a forced `doc_type`; returns a job.
-- `import_drive_files` - import specific Drive files, each with an optional `password`.
-- `upload_documents` - bulk upload; each item has exactly one of `drive_file_id`, `document_url`, `content_base64`, or `file`.
+- `upload_documents` - bulk upload; each item has exactly one of `drive_file_id`, `document_url`, `content_base64`, or `file`, plus an optional `password` (use it to retry Drive files reported as `needs_password`).
 - `get_import_job` / `list_import_jobs` - progress, counts per outcome, and each file's result.
-- `download_documents` - a 24-hour ZIP link for every document matching `names`, `doc_types`, `financial_year`, or `tags`.
 
 Hidden documents are never reachable through MCP tools.
 
@@ -336,8 +334,7 @@ the editable title, summary, and tags; review flags with a **Mark reviewed**
 button; an editable table of extracted fields; and re-extraction with a chosen
 type. The upload dialog accepts many files at once with a PDF password and an
 optional document type, and its **Google Drive** tab connects Drive, imports a
-folder, follows recent jobs, and retries locked PDFs with a password. The
-gallery's ZIP button bundles exactly the documents shown, after any search.
+folder, follows recent jobs, and retries locked PDFs with a password.
 
 ## Project structure
 

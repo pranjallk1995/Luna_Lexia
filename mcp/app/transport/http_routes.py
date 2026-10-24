@@ -347,10 +347,6 @@ class LexiaHTTPRoutes:
                 payload.get("doc_type") or None,
             )
 
-        async def drive_files(request: Request):
-            payload = await self.payload(request)
-            return await anyio.to_thread.run_sync(imports.import_drive_files, payload.get("files") or [])
-
         async def batch(request: Request):
             payload = await self.payload(request)
             return await anyio.to_thread.run_sync(imports.upload_batch, payload.get("items") or [])
@@ -361,27 +357,15 @@ class LexiaHTTPRoutes:
         async def job(request: Request):
             return imports.job(request.path_params["job_id"])
 
-        async def bulk_download(request: Request):
-            payload = await self.payload(request)
-            return await anyio.to_thread.run_sync(
-                downloads.create_zip_for,
-                payload.get("names"),
-                payload.get("doc_types"),
-                payload.get("financial_year"),
-                payload.get("tags"),
-            )
-
         self.route("GET", "/api/drive/status", status)
         self.route("GET", "/api/drive/authorization-url", authorization_url)
         self.route("GET", "/api/drive/callback", callback, protected=False)
         self.route("POST", "/api/drive/disconnect", disconnect)
         self.route("GET", "/api/drive/folders", folders)
         self.route("POST", "/api/imports/drive-folder", drive_folder, 201)
-        self.route("POST", "/api/imports/drive-files", drive_files, 201)
         self.route("POST", "/api/imports/batch", batch, 201)
         self.route("GET", "/api/imports", jobs)
         self.route("GET", "/api/imports/{job_id}", job)
-        self.route("POST", "/api/downloads", bulk_download)
 
     def _register_hidden_documents(self) -> None:
         hidden = self.service.hidden
