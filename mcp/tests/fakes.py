@@ -224,7 +224,7 @@ class FakeAnalyzer:
 
 
 class StubParser:
-    """Return fixed parsed content, so graph tests control what the agents see."""
+    """Return fixed parsed content, so pipeline tests control what the agents see."""
 
     def __init__(self, content: DocumentContent) -> None:
         self.content = content

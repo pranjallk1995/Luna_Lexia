@@ -1,21 +1,14 @@
 """Bulk imports into Lexia, from Google Drive folders or batches of uploads, as background jobs.
 
-Two LangGraph graphs do the work. A job runs as a checkpointed graph whose
-thread is the job ID:
+A job is stored with its request: a Drive folder to list, or the items to
+import. Once a folder is listed, its file list replaces the request, and every
+imported file is recorded with its position in that list. A job a restart cut
+off therefore resumes by itself: it skips every recorded position and starts
+over only the file that was in progress, without listing the folder again.
 
-    plan ─┬─▶ import_next ⟲ (one file per step) ─▶ finish
-          └─▶ finish                                (nothing to import, or listing failed)
-
-After every step the checkpointer saves the job's state (its file list and a
-cursor), so a job cut off by a restart resumes at the file it was on instead of
-listing the folder and starting again. Each file runs through its own graph:
-
-    inspect ─┬─▶ record                        (already imported unchanged, or not a PDF or image)
-             └─▶ download ─┬─▶ upload ─▶ record
-                           └─▶ record           (download failed)
-
-``upload`` hands the bytes to Lexia's normal upload, so each file goes through
-the document analysis graph, duplicate detection, and PDF unlocking. A
+Each file is inspected (skipped if imported before unchanged, or not a PDF or
+image), downloaded, uploaded through Lexia's normal upload (so it goes through
+the analysis pipeline, duplicate detection, and PDF unlocking), and recorded. A
 password-protected PDF is recorded as ``needs_password`` so it can be retried
 with its password. Jobs run one at a time on a background worker, because each
 file takes seconds of model time and a folder can hold dozens.
@@ -27,13 +20,10 @@ import logging
 import queue
 import threading
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
-from typing import Any, TypedDict
+from dataclasses import asdict
+from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
-from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.graph import END, START, StateGraph
-from langgraph.runtime import Runtime
 
 from app.core.schemas import document_type
 from app.data.repositories import ImportRepository, Row
@@ -45,163 +35,96 @@ logger = logging.getLogger(__name__)
 SOURCES = ("drive_file_id", "document_url", "content_base64", "file")
 
 
-@dataclass(frozen=True)
-class ImportContext:
-    """What every file of one job shares."""
-
-    job_id: str
-    drive: DriveClient | None
-
-
-class ImportState(TypedDict, total=False):
-    item: dict[str, Any]
-    drive_file: DriveFile | None
-    name: str
-    data: bytes
-    outcome: str
-    document_name: str | None
-    error: str | None
-
-
-class ImportGraph:
-    """Import one file: inspect it, download it, upload it into Lexia, and record the outcome."""
+class FileImporter:
+    """Import one file into Lexia and record its outcome."""
 
     def __init__(self, visible, sources: DocumentSourceResolver, imports: ImportRepository) -> None:
         self.visible = visible
         self.sources = sources
         self.imports = imports
-        graph = StateGraph(ImportState, context_schema=ImportContext)
-        graph.add_node("inspect", self.inspect)
-        graph.add_node("download", self.download)
-        graph.add_node("upload", self.upload)
-        graph.add_node("record", self.record)
-        graph.add_edge(START, "inspect")
-        graph.add_conditional_edges("inspect", lambda s: "record" if s.get("outcome") else "download", ["record", "download"])
-        graph.add_conditional_edges("download", lambda s: "record" if s.get("outcome") else "upload", ["record", "upload"])
-        graph.add_edge("upload", "record")
-        graph.add_edge("record", END)
-        # Never checkpointed: a file's state holds its bytes, and the job graph resumes per file.
-        self.graph = graph.compile(checkpointer=False, name="lexia-import")
 
     def run(self, item: dict[str, Any], job_id: str, drive: DriveClient | None) -> str:
         """Import one item; return its outcome."""
-        state = self.graph.invoke({"item": item}, context=ImportContext(job_id, drive), durability="exit")
-        return state["outcome"]
-
-    # Nodes
-
-    def inspect(self, state: ImportState, runtime: Runtime[ImportContext]) -> ImportState:
-        item = state["item"]
-        if not item.get("drive_file_id") and not item.get("drive_file"):
-            return {"name": item.get("name") or "", "drive_file": None}
-        drive = runtime.context.drive
-        if drive is None:
-            return {"name": item.get("name") or item.get("drive_file_id", ""), "outcome": "failed",
-                    "error": "Google Drive is not connected."}
+        file, name = None, item.get("name") or item.get("drive_file_id") or ""
         try:
-            file = DriveFile(**item["drive_file"]) if item.get("drive_file") else drive.file(item["drive_file_id"])
-        except Exception as error:  # noqa: BLE001 - a missing or private file is reported, not raised
-            return {"name": item.get("drive_file_id", ""), "outcome": "failed", "error": str(error)[:500]}
-        name = item.get("name") or file.upload_name
-        if not file.importable:
-            return {"drive_file": file, "name": name, "outcome": "unsupported",
-                    "error": f"{file.mime_type} files are not imported; Lexia stores PDFs and images."}
-        if not item.get("password") and self.imports.already_imported("drive", file.file_id, file.version):
-            return {"drive_file": file, "name": name, "outcome": "skipped"}
-        return {"drive_file": file, "name": name}
-
-    def download(self, state: ImportState, runtime: Runtime[ImportContext]) -> ImportState:
-        item, file = state["item"], state.get("drive_file")
-        try:
-            if file is not None:
-                return {"data": runtime.context.drive.download(file)}
-            source = self.sources.resolve(item.get("content_base64"), item.get("document_url"), item.get("file"))
-            return {"data": source.data, "name": state["name"] or source.suggested_name or ""}
-        except Exception as error:  # noqa: BLE001
-            return {"outcome": "failed", "error": f"Download failed: {error}"[:500]}
-
-    def upload(self, state: ImportState) -> ImportState:
-        item = state["item"]
-        try:
-            result = self.visible.upload(state["name"] or None, state["data"], item.get("password"), item.get("doc_type"))
-        except ValueError as error:
-            message = str(error)
-            if "password" in message.lower():
-                return {"outcome": "needs_password", "error": message[:500]}
-            return {"outcome": "failed", "error": message[:500]}
-        except Exception as error:  # noqa: BLE001 - e.g. the model being unavailable
-            return {"outcome": "failed", "error": str(error)[:500]}
-        outcome = "duplicate" if result.get("status") == "duplicate" else "imported"
-        return {"outcome": outcome, "document_name": result.get("name")}
-
-    def record(self, state: ImportState, runtime: Runtime[ImportContext]) -> ImportState:
-        file, item = state.get("drive_file"), state["item"]
+            if item.get("drive_file") or item.get("drive_file_id"):
+                if drive is None:
+                    raise ImportSkipped("failed", "Google Drive is not connected.")
+                file = DriveFile(**item["drive_file"]) if item.get("drive_file") else drive.file(item["drive_file_id"])
+                name = item.get("name") or file.upload_name
+                if not file.importable:
+                    raise ImportSkipped("unsupported", f"{file.mime_type} files are not imported; Lexia stores PDFs and images.")
+                if not item.get("password") and self.imports.already_imported("drive", file.file_id, file.version):
+                    raise ImportSkipped("skipped")
+            data, name = self.download(item, file, drive, name)
+            outcome, document_name, error = *self.upload(item, name, data), None
+        except ImportSkipped as stop:
+            outcome, document_name, error = stop.outcome, None, stop.error
         self.imports.record_item(
-            runtime.context.job_id,
+            job_id,
             {
                 "source": "drive" if file or item.get("drive_file_id") else self.source_of(item),
                 "source_id": file.file_id if file else item.get("drive_file_id") or item.get("document_url"),
                 "content_md5": file.version if file else None,
-                "name": state.get("name") or "(unnamed)",
+                "name": name or "(unnamed)",
                 "path": file.path if file else None,
-                "outcome": state["outcome"],
-                "document_name": state.get("document_name"),
-                "error": state.get("error"),
+                "outcome": outcome,
+                "document_name": document_name,
+                "error": error,
                 "position": item.get("position"),
             },
         )
-        return {}
+        return outcome
 
-    # Routes and helpers
+    def download(self, item: dict[str, Any], file: DriveFile | None, drive, name: str) -> tuple[bytes, str]:
+        try:
+            if file is not None:
+                return drive.download(file), name
+            source = self.sources.resolve(item.get("content_base64"), item.get("document_url"), item.get("file"))
+            return source.data, name or source.suggested_name or ""
+        except Exception as error:  # noqa: BLE001 - a missing or private file is reported, not raised
+            raise ImportSkipped("failed", f"Download failed: {error}"[:500]) from error
+
+    def upload(self, item: dict[str, Any], name: str, data: bytes) -> tuple[str, str | None]:
+        try:
+            result = self.visible.upload(name or None, data, item.get("password"), item.get("doc_type"))
+        except ValueError as error:
+            message = str(error)[:500]
+            raise ImportSkipped("needs_password" if "password" in message.lower() else "failed", message) from error
+        except Exception as error:  # noqa: BLE001 - e.g. the model being unavailable
+            raise ImportSkipped("failed", str(error)[:500]) from error
+        return ("duplicate" if result.get("status") == "duplicate" else "imported"), result.get("name")
 
     @staticmethod
     def source_of(item: dict[str, Any]) -> str:
         return "url" if item.get("document_url") else "file" if item.get("file") else "base64"
 
 
-class JobState(TypedDict, total=False):
-    request: dict[str, Any]
-    items: list[dict[str, Any]]
-    cursor: int
-    error: str | None
+class ImportSkipped(Exception):
+    """Ends one file's import early with an outcome other than imported."""
+
+    def __init__(self, outcome: str, error: str | None = None) -> None:
+        super().__init__(error or outcome)
+        self.outcome = outcome
+        self.error = error
 
 
 class ImportJobs:
     """Run import jobs one at a time on a background thread, resuming any a restart cut off.
 
     ``request`` is what a job was asked to do: ``{"folder_id", "recursive",
-    "doc_type", "max_items"}`` for a Drive folder, or ``{"items": [...]}``. It is
-    stored with the job, so a job queued but not yet started also survives a restart.
+    "doc_type", "max_items"}`` for a Drive folder, or ``{"items": [...]}``.
     """
 
-    # One graph step per file, so the limit must exceed the largest job.
-    RECURSION_LIMIT = 10_000
-
-    def __init__(
-        self,
-        imports: ImportRepository,
-        graph: ImportGraph,
-        checkpointer: BaseCheckpointSaver,
-        run_inline: bool = False,
-    ) -> None:
+    def __init__(self, imports: ImportRepository, files: FileImporter, run_inline: bool = False) -> None:
         self.imports = imports
-        self.files = graph
-        self.checkpointer = checkpointer
+        self.files = files
         self.run_inline = run_inline
         # Set by ImportService: the connected Drive client, or None.
         self.drive_provider: Callable[[], DriveClient | None] = lambda: None
         self._queue: queue.Queue = queue.Queue()
         self._worker: threading.Thread | None = None
         self._lock = threading.Lock()
-        job = StateGraph(JobState, context_schema=ImportContext)
-        job.add_node("plan", self.plan)
-        job.add_node("import_next", self.import_next)
-        job.add_node("finish", self.finish)
-        job.add_edge(START, "plan")
-        job.add_conditional_edges("plan", self.route, ["import_next", "finish"])
-        job.add_conditional_edges("import_next", self.route, ["import_next", "finish"])
-        job.add_edge("finish", END)
-        self.graph = job.compile(checkpointer=checkpointer, name="lexia-import-job")
 
     def submit(self, kind: str, source: str, request: dict[str, Any]) -> Row:
         job_id = str(self.imports.create_job(kind, source, request)["job_id"])
@@ -237,63 +160,42 @@ class ImportJobs:
                 self._queue.task_done()
 
     def _run(self, job_id: str) -> None:
-        """Start a job, or continue it from its last checkpoint."""
-        config = {"configurable": {"thread_id": job_id}, "recursion_limit": self.RECURSION_LIMIT}
-        if self.graph.get_state(config).next:
-            graph_input = None
-            logger.info("Resuming import job %s from its checkpoint", job_id)
-        else:
+        """Start a job, or continue it past the files it already recorded."""
+        request, drive = self.imports.job_request(job_id) or {}, self.drive_provider()
+        if "items" not in request:
             self.imports.update_job(job_id, status="listing", started=True)
-            graph_input = {"request": self.imports.job_request(job_id) or {}, "cursor": 0}
-        self.graph.invoke(graph_input, config, context=ImportContext(job_id, self.drive_provider()), durability="sync")
-        self.checkpointer.delete_thread(job_id)
-
-    # Nodes
-
-    def plan(self, state: JobState, runtime: Runtime[ImportContext]) -> JobState:
-        """List the job's files once; the checkpoint keeps the list for a resume."""
-        request = state["request"]
-        try:
-            if "folder_id" in request:
-                drive = runtime.context.drive
-                if drive is None:
-                    raise ValueError("Google Drive is not connected.")
-                files = drive.walk(request["folder_id"], request.get("recursive", True))
-                items = [{"drive_file": asdict(file), "doc_type": request.get("doc_type")} for file in files]
-            else:
-                items = list(request.get("items") or [])
-            limit = request.get("max_items")
-            if limit and len(items) > limit:
-                raise ValueError(f"One import may hold at most {limit} files; this one has {len(items)}.")
-        except Exception as error:  # noqa: BLE001 - recorded on the job
-            return {"items": [], "error": str(error)[:1000]}
-        self.imports.update_job(runtime.context.job_id, status="running", total=len(items))
-        return {"items": items, "cursor": 0}
-
-    def import_next(self, state: JobState, runtime: Runtime[ImportContext]) -> JobState:
-        """Import the file at the cursor, unless it was recorded just before an interruption."""
-        cursor, job_id = state["cursor"], runtime.context.job_id
-        item = {**state["items"][cursor], "position": cursor}
-        if not self.imports.item_recorded(job_id, cursor):
             try:
-                self.files.run(item, job_id, runtime.context.drive)
+                request = {"items": self.plan(request, drive)}
+            except Exception as error:  # noqa: BLE001 - recorded on the job
+                self.imports.update_job(job_id, status="failed", error=str(error)[:1000], request=None, finished=True)
+                return
+            # The listed files replace the request, so a resume never lists the folder again.
+            self.imports.update_job(job_id, request=request)
+        items = request["items"]
+        self.imports.update_job(job_id, status="running", total=len(items), started=True)
+        for position, item in enumerate(items):
+            if self.imports.item_recorded(job_id, position):
+                continue
+            item = {**item, "position": position}
+            try:
+                self.files.run(item, job_id, drive)
             except Exception as error:  # noqa: BLE001 - one bad file never stops the job
                 logger.exception("Import item failed")
                 self.imports.record_item(job_id, {"source": "unknown", "name": str(item.get("name") or "?"),
-                                                  "outcome": "failed", "error": str(error)[:500], "position": cursor})
-        return {"cursor": cursor + 1}
-
-    def finish(self, state: JobState, runtime: Runtime[ImportContext]) -> JobState:
-        error = state.get("error")
+                                                  "outcome": "failed", "error": str(error)[:500], "position": position})
         # The request may hold Base64 uploads; it is not needed once the job is over.
-        self.imports.update_job(
-            runtime.context.job_id, status="failed" if error else "done", error=error, request=None, finished=True
-        )
-        return {}
+        self.imports.update_job(job_id, status="done", request=None, finished=True)
 
     @staticmethod
-    def route(state: JobState) -> str:
-        return "import_next" if state.get("cursor", 0) < len(state.get("items") or []) else "finish"
+    def plan(request: dict[str, Any], drive: DriveClient | None) -> list[dict[str, Any]]:
+        """List a Drive folder's files as import items."""
+        if drive is None:
+            raise ValueError("Google Drive is not connected.")
+        files = drive.walk(request["folder_id"], request.get("recursive", True))
+        limit = request.get("max_items")
+        if limit and len(files) > limit:
+            raise ValueError(f"One import may hold at most {limit} files; this one has {len(files)}.")
+        return [{"drive_file": asdict(file), "doc_type": request.get("doc_type")} for file in files]
 
 
 class ImportService:

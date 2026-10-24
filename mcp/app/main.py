@@ -13,7 +13,7 @@ from app.integrations.parsing import DoclingParser
 from app.integrations.remote import DocumentSourceResolver
 from app.services.application import LexiaService
 from app.services.documents import DocumentReader
-from app.services.imports import ImportGraph, ImportJobs, ImportService
+from app.services.imports import FileImporter, ImportJobs, ImportService
 from app.transport.branding import ServerBranding
 from app.transport.http_routes import LexiaHTTPRoutes
 from app.transport.mcp_tools import LexiaMCPTools
@@ -43,7 +43,7 @@ class LunaLexiaApplication:
             self.service.visible.decoder, config.max_document_bytes, config.max_upload_redirects
         )
         imports = ImportRepository(self.database)
-        jobs = ImportJobs(imports, ImportGraph(self.service.visible, sources, imports), self.database.checkpointer())
+        jobs = ImportJobs(imports, FileImporter(self.service.visible, sources, imports))
         self.service.imports = ImportService(
             imports,
             DriveOAuth(config.drive_client_id, config.drive_client_secret, config.drive_redirect_uri, config.api_token),

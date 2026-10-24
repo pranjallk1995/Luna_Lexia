@@ -7,7 +7,6 @@ import uuid
 from pathlib import Path
 
 from cryptography.fernet import Fernet
-from langgraph.checkpoint.memory import InMemorySaver
 
 from fakes import FakeAnalyzer, FakeDocumentRepository, FakeParser, FakePublicURLRepository, image_bytes, payslip_pdf
 from test_services import LOCKED_PASSWORD, LOCKED_PDF
@@ -16,7 +15,7 @@ from app.core.config import AppConfig
 from app.integrations.drive import DriveFile, DriveOAuth
 from app.integrations.remote import DocumentSourceResolver
 from app.services.application import LexiaService
-from app.services.imports import ImportGraph, ImportJobs, ImportService
+from app.services.imports import FileImporter, ImportJobs, ImportService
 
 
 class FakeImportRepository:
@@ -152,11 +151,11 @@ class ImportTestCase(unittest.TestCase):
         self.drive = FakeDrive()
         self.tokens = []
         sources = DocumentSourceResolver(self.service.visible.decoder, config.max_document_bytes, 3)
-        graph = ImportGraph(self.service.visible, sources, self.imports_repo)
+        files = FileImporter(self.service.visible, sources, self.imports_repo)
         self.imports = ImportService(
             self.imports_repo,
             FakeOAuth(),
-            ImportJobs(self.imports_repo, graph, InMemorySaver(), run_inline=True),
+            ImportJobs(self.imports_repo, files, run_inline=True),
             Fernet.generate_key().decode(),
             500,
             drive_factory=lambda token: self.tokens.append(token) or self.drive,
@@ -340,7 +339,7 @@ class DriveConfigTests(unittest.TestCase):
 
 
 class Interruption(BaseException):
-    """Stands in for the process dying: not an Exception, so nothing in the graphs catches it."""
+    """Stands in for the process dying: not an Exception, so nothing in the import catches it."""
 
 
 class ResumeTests(ImportTestCase):
@@ -372,17 +371,16 @@ class ResumeTests(ImportTestCase):
         self.assertEqual(self.imports.jobs.resume_unfinished(), [self.job_id()])
         report = self.imports.job(self.job_id())
         self.assertEqual((report["status"], report["total"], report["processed"]), ("done", 5, 5))
-        self.assertEqual(self.drive.walks, 1)  # the file list came from the checkpoint
+        self.assertEqual(self.drive.walks, 1)  # the stored file list was reused
         self.assertEqual(self.uploaded.count("payslip_march.pdf"), 1)  # finished files are not redone
         self.assertEqual(self.uploaded.count("pan.png"), 2)  # the file in progress starts over
         self.assertEqual(report["outcomes"], {"imported": 3, "needs_password": 1, "unsupported": 1})
         self.assertIsNone(self.imports_repo.requests[self.job_id()])
-        self.assertFalse(self.imports.jobs.graph.get_state({"configurable": {"thread_id": self.job_id()}}).values)
 
     def test_a_file_recorded_just_before_the_interruption_is_not_imported_again(self):
         with self.assertRaises(Interruption):
             self.imports.import_drive_folder("Professional")
-        # As if the process died after pan.png was recorded but before its step was checkpointed.
+        # As if the process died just after pan.png was imported and recorded.
         self.imports_repo.record_item(self.job_id(), {"source": "drive", "source_id": "f-scan", "name": "pan.png",
                                                       "outcome": "imported", "position": 1})
         self.crash_at = None

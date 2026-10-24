@@ -4,9 +4,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 import psycopg
-from langgraph.checkpoint.postgres import PostgresSaver
 from psycopg.rows import dict_row
-from psycopg_pool import ConnectionPool
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS document_metadata (
@@ -111,6 +109,8 @@ CREATE INDEX IF NOT EXISTS import_items_source_idx ON import_items (source, sour
 ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS request jsonb;
 ALTER TABLE import_items ADD COLUMN IF NOT EXISTS position integer;
 CREATE UNIQUE INDEX IF NOT EXISTS import_items_position_idx ON import_items (job_id, position);
+-- LangGraph's checkpoint tables, from when imports ran as a checkpointed graph.
+DROP TABLE IF EXISTS checkpoint_writes, checkpoint_blobs, checkpoints, checkpoint_migrations;
 
 CREATE TABLE IF NOT EXISTS vault_config (
     singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
@@ -136,16 +136,3 @@ class Database:
         """Create or upgrade the idempotent Luna Lexia database schema."""
         with psycopg.connect(self.database_url, autocommit=True) as connection:
             connection.execute(SCHEMA_SQL)
-
-    def checkpointer(self) -> PostgresSaver:
-        """LangGraph's checkpoint store in this database, with its tables created."""
-        pool = ConnectionPool(
-            self.database_url,
-            min_size=1,
-            max_size=2,
-            kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
-            open=True,
-        )
-        saver = PostgresSaver(pool)
-        saver.setup()
-        return saver

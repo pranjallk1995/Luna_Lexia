@@ -373,14 +373,16 @@ class ImportRepository(Repository):
         ) is not None
 
     def update_job(self, job_id: str, **fields: Any) -> None:
-        """Set job columns; ``started`` and ``finished`` stamp the matching time."""
+        """Set job columns; ``started`` stamps the first start and ``finished`` the end."""
         assignments, params = [], []
         for name, value in fields.items():
-            if name in ("started", "finished"):
-                assignments.append(f"{name}_at = now()")
+            if name == "started":
+                assignments.append("started_at = coalesce(started_at, now())")
+            elif name == "finished":
+                assignments.append("finished_at = now()")
             else:
                 assignments.append(f"{name} = %s")
-                params.append(value)
+                params.append(Jsonb(value) if isinstance(value, dict) else value)
         with self.database.connect() as connection:
             connection.execute(
                 f"UPDATE import_jobs SET {', '.join(assignments)} WHERE job_id = %s", (*params, job_id)

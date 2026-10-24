@@ -148,9 +148,9 @@ class PublicURLService:
 
 
 class DocumentIndexer:
-    """Run the analysis graph on document bytes and persist the result.
+    """Run the analysis pipeline on document bytes and persist the result.
 
-    The graph (``DocumentPipeline``) is Docling -> classification -> extraction,
+    The pipeline (``DocumentPipeline``) is Docling -> classification -> extraction,
     with a page-image fallback -> business-rule validation -> tagging.
     """
 

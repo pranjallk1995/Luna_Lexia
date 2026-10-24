@@ -306,7 +306,7 @@ class LexiaHTTPRoutes:
         self.route("POST", "/api/favorites", update_favorites)
 
     def _register_imports(self) -> None:
-        imports, downloads = self.service.imports, self.service.downloads
+        imports = self.service.imports
 
         def page(title: str, message: str) -> HTMLResponse:
             return HTMLResponse(

@@ -18,7 +18,7 @@ class DocumentAnalyzer:
     summary, and tags; one per type fills that type's schema. Pydantic AI
     validates each reply and sends validation errors back to the model for
     another attempt. The workflow around them (fallbacks, business rules,
-    review flags) is the LangGraph graph in ``app.services.pipeline``.
+    review flags) is ``app.services.pipeline``.
     """
 
     MODEL_IMAGE_EDGE = 1600

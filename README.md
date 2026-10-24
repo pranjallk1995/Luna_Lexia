@@ -39,17 +39,10 @@ Upload (UI, MCP tool, upload link, or HTTP API)
   -> store      file in the document volume, record and page text in PostgreSQL
 ```
 
-Parsing through validation runs as a LangGraph state graph
-(`mcp/app/services/pipeline.py`):
-
-```text
-parse ─▶ classify ─┬─▶ extract_text ──┬────────────────────▶ validate ─▶ tag
-                   │                  └─▶ extract_images ─▶─┘
-                   └─▶ extract_images (no readable text) ──▶─┘
-```
-
-When extraction from the parsed text fails, the graph tries once more from page
-images before giving up; a document read that way is flagged for review.
+Parsing through tagging runs in `mcp/app/services/pipeline.py`. When
+extraction from the parsed text fails, or the document has no readable text,
+extraction is tried from page images; a document read that way is flagged for
+review.
 
 - **Docling** turns PDFs and photos into Markdown page by page, so scans become
   text (RapidOCR) and every page stays citable. If Docling fails, the PDF's own
@@ -238,55 +231,23 @@ Then choose **Upload → Google Drive → Connect Google Drive**. Changing
 
 ### How bulk imports run and resume
 
-Drive folder imports, Drive file imports, and bulk uploads all become
-background jobs, run one at a time because Docling and the model share the GPU.
-Two LangGraph graphs in `mcp/app/services/imports.py` do the work.
+Drive folder imports and bulk uploads become background jobs in
+`mcp/app/services/imports.py`, run one at a time because Docling and the model
+share the GPU. Each file is inspected (skipped if it was imported before and is
+unchanged, or is not a PDF or image), downloaded, uploaded through the normal
+analysis pipeline, and recorded in `import_items` with its outcome and its
+position in the job.
 
-**The job graph** (`lexia-import-job`) lists the files once, then imports one
-file per step:
+Resuming needs no extra machinery, because the database already holds the state:
+- `import_jobs.request` stores what the job was asked to do. Once a Drive folder
+  is listed, its file list replaces the request, so the folder is never listed twice.
+- `import_items` records every finished file by position.
 
-```
-plan ─┬─▶ import_next ⟲ (one file per step) ─▶ finish
-      └─▶ finish            (nothing to import, or the listing failed)
-```
-
-Its state is the job's `request`, the planned `items`, and a `cursor`. It runs
-with LangGraph's `PostgresSaver` checkpointer in Lexia's database, with the job
-ID as the thread ID and `durability="sync"`, so the state is committed after
-every step: after `plan`, the full file list; after each `import_next`, the
-advanced cursor.
-
-**The file graph** (`lexia-import`) handles one file inside `import_next`:
-
-```
-inspect ─┬─▶ record                    (unchanged since its last import, or not a PDF or image)
-         └─▶ download ─┬─▶ upload ─▶ record
-                       └─▶ record       (download failed)
-```
-
-`upload` is Lexia's normal upload, so every file goes through the
-Docling → classify → extract → validate pipeline, duplicate detection, and PDF
-unlocking. This graph is never checkpointed (its state holds the file's bytes);
-resuming happens a file at a time in the job graph.
-
-**Resuming after an interruption.** When the service starts, it queues every
-job still `queued`, `listing`, or `running`, oldest first, and for each one:
-
-1. **Interrupted mid-job:** the job thread has a checkpoint with a next step,
-   so the graph is invoked with no input and LangGraph continues from the last
-   saved step. The folder is not listed again; the file list and cursor come
-   from the checkpoint. Files before the cursor are not touched, and the file
-   that was in progress starts over.
-2. **Queued but never started:** no checkpoint exists, so the job starts from
-   the `request` stored with it in `import_jobs`. Base64 uploads survive too.
-
-Two safeguards cover a crash between finishing a file and saving its step.
-Each recorded file carries its `position` in the job, and `import_next` skips a
-position that is already recorded. If the upload itself had finished, Lexia's
-duplicate detection (by content hash) stops a second copy. When a job finishes,
-its checkpoints and stored request are deleted. A job only resumes
-automatically after a restart; to retry `failed` files, start the import again,
-and files already imported are skipped.
+On startup, every job still `queued`, `listing`, or `running` is queued again,
+oldest first. It skips each recorded position and starts over only the file that
+was in progress; if that file's upload had already finished, duplicate detection
+(by content hash) stops a second copy. When a job finishes, its stored request is
+cleared. To retry `failed` files, start the import again; imported files are skipped.
 
 ## MCP tools
 
@@ -343,7 +304,7 @@ Lexia follows the shared Luna layout (see the Visia README):
 - `mcp/app/core/` - configuration, `schemas.py` (document types, extraction schemas, business rules), and domain models.
 - `mcp/app/data/` - PostgreSQL schema (with a trigger-maintained search vector), repositories, and document storage.
 - `mcp/app/integrations/` - `parsing.py` (Docling), `ollama.py` (native Ollama model for Pydantic AI), `extraction.py` (classification and extraction agents), and `remote.py` (SSRF-guarded document sources), and `drive.py` (Google Drive sign-in and client).
-- `mcp/app/services/` - use cases (`application.py`), PDF handling and previews (`documents.py`), ZIP downloads, upload links, and `imports.py` (the checkpointed import job graph, the per-file import graph, and the job queue).
+- `mcp/app/services/` - use cases (`application.py`), PDF handling and previews (`documents.py`), ZIP downloads, upload links, and `imports.py` (bulk import jobs and their queue).
 - `mcp/app/transport/` - MCP tools, HTTP routes, bearer authentication, and branding.
 - `ui/` - the Streamlit interface; `services/documents.py` renders pages with PDFium.
 

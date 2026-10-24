@@ -5,7 +5,7 @@ from datetime import date
 
 from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, TextPart, UserPromptPart
 
-from fakes import PAYSLIP, FakeAnalyzer, ScriptedChat, StubParser, image_bytes, payslip_details
+from fakes import PAYSLIP, ScriptedChat, StubParser, image_bytes, payslip_details
 
 from app.core.models import DocumentClassification, DocumentContent, MetadataRules
 from app.core.schemas import (
@@ -340,8 +340,8 @@ class OllamaAdapterTests(unittest.TestCase):
         self.assertIn("valid number", chat[-1]["content"])
 
 
-class PipelineGraphTests(unittest.TestCase):
-    """The LangGraph pipeline, driven by the real agents with scripted model replies."""
+class PipelineTests(unittest.TestCase):
+    """The analysis pipeline, driven by the real agents with scripted model replies."""
 
     def run_pipeline(self, replies, content=CONTENT, data=None, doc_type=None):
         self.chat = ScriptedChat(replies)
@@ -400,11 +400,6 @@ class PipelineGraphTests(unittest.TestCase):
     def test_low_confidence_is_flagged(self):
         analysis = self.run_pipeline([{**CLASSIFICATION, "confidence": 0.3}, PAYSLIP])
         self.assertTrue(any("low confidence" in flag for flag in analysis.review_flags))
-
-    def test_graph_shape(self):
-        pipeline = DocumentPipeline(StubParser(CONTENT), FakeAnalyzer(), MetadataRules(32, frozenset()))
-        nodes = set(pipeline.graph.get_graph().nodes)
-        self.assertTrue({"parse", "classify", "extract_text", "extract_images", "validate", "tag"} <= nodes)
 
 
 if __name__ == "__main__":
