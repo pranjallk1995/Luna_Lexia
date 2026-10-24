@@ -13,7 +13,7 @@ from datetime import date, datetime
 from functools import partial
 from typing import Annotated, Any, ClassVar, Literal
 
-from pydantic import AliasChoices, BaseModel, BeforeValidator, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
 DATE_FORMATS = (
     "%Y-%m-%d",
@@ -241,7 +241,9 @@ class ExtractedDetails(BaseModel):
     """Base class: names the fields that yield the indexed key facts, and checks rules.
 
     ``financial_year`` comes from the document's own financial year, else its
-    assessment year minus one, else the reference date's April-March year.
+    assessment year minus one, else the reference date's April-March year;
+    types that are not financial records (identity, education, careers) set
+    ``TRACKS_FINANCIAL_YEAR`` to False so their dates do not imply one.
     ``review_flags`` applies business rules a correct extraction satisfies; a
     failure does not reject the data but marks it for a human to review.
     """
@@ -251,6 +253,9 @@ class ExtractedDetails(BaseModel):
     ISSUER_FIELD: ClassVar[str | None] = None
     DATE_FIELDS: ClassVar[tuple[str, ...]] = ()
     AMOUNT_FIELD: ClassVar[str | None] = None
+    # Whether a missing key amount is a review flag, or just absent for many such documents.
+    AMOUNT_REQUIRED: ClassVar[bool] = True
+    TRACKS_FINANCIAL_YEAR: ClassVar[bool] = True
 
     def reference_date(self) -> date | None:
         return next(
@@ -263,7 +268,7 @@ class ExtractedDetails(BaseModel):
         assessment_year = getattr(self, "assessment_year", None)
         if not financial_year and assessment_year:
             financial_year = previous_year_range(assessment_year)
-        if not financial_year and reference:
+        if not financial_year and reference and self.TRACKS_FINANCIAL_YEAR:
             financial_year = financial_year_for(reference)
         return KeyFacts(
             financial_year=financial_year,
@@ -275,7 +280,7 @@ class ExtractedDetails(BaseModel):
     def review_flags(self) -> list[str]:
         """Return a readable message for every business rule the details break."""
         flags = []
-        if self.AMOUNT_FIELD and getattr(self, self.AMOUNT_FIELD) is None:
+        if self.AMOUNT_FIELD and self.AMOUNT_REQUIRED and getattr(self, self.AMOUNT_FIELD) is None:
             flags.append(f"{field_label(self.AMOUNT_FIELD)} was not found.")
         fields = type(self).model_fields
         for name in fields:
@@ -484,8 +489,12 @@ class TaxStatement(ExtractedDetails):
     DATE_FIELDS = ("statement_date",)
     AMOUNT_FIELD = "total_tds"
 
-    statement_kind: Choice("form_26as", "ais", "tis") = Field(
-        None, description="form_26as, ais (Annual Information Statement), or tis"
+    statement_kind: Choice("form_26as", "ais", "tis", "tax_computation") = Field(
+        None,
+        description=(
+            "form_26as, ais (Annual Information Statement), tis, or tax_computation "
+            "(an employer's or advisor's yearly tax computation sheet)"
+        ),
     )
     taxpayer_name: Text = None
     pan: Identifier = None
@@ -502,6 +511,10 @@ class TaxStatement(ExtractedDetails):
     interest_income_reported: Money = None
     dividend_income_reported: Money = None
     securities_sale_reported: Money = None
+    gross_total_income: Money = Field(None, description="Tax computation sheets")
+    total_deductions: Money = Field(None, description="Tax computation sheets")
+    taxable_income: Money = Field(None, description="Tax computation sheets")
+    tax_payable: Money = Field(None, description="Tax computation sheets")
 
     def rules(self) -> list[str]:
         entries = amount_total(self.tds_entries, "tax_deducted")
@@ -768,26 +781,40 @@ class InvestmentProof(ExtractedDetails):
 
 class LoanStatement(ExtractedDetails):
     ISSUER_FIELD = "lender_name"
-    DATE_FIELDS = ("certificate_date", "period_to")
-    AMOUNT_FIELD = "interest_paid"
+    DATE_FIELDS = ("certificate_date", "agreement_date", "repayment_from", "period_to")
+    AMOUNT_FIELD = "emi_amount"
 
     lender_name: Text = None
     borrower_names: Text = None
     loan_account_number: Text = None
     loan_type: Choice("home", "education", "vehicle", "personal", "gold", "other") = None
     property_address: Text = Field(None, description="Home loans only")
-    certificate_date: Day = None
-    period_from: Day = None
-    period_to: Day = None
+    agreement_date: Day = Field(None, description="Agreement or sanction date")
+    certificate_date: Day = Field(None, description="Interest certificate or statement date")
+    period_from: Day = Field(None, description="Start of the statement or certificate period only")
+    period_to: Day = Field(None, description="End of the statement or certificate period only")
     financial_year: YearRange = None
     sanctioned_amount: Money = None
     disbursed_amount: Money = None
     interest_rate_percent: Number = None
     emi_amount: Money = None
+    tenure_months: Number = None
+    repayment_from: Day = Field(None, description="First EMI date")
+    repayment_to: Day = Field(None, description="Last EMI date")
     principal_repaid: Money = Field(None, description="Principal repaid in the period")
     interest_paid: Money = Field(None, description="Interest paid in the period")
     pre_emi_interest: Money = None
     outstanding_principal: Money = None
+
+    def rules(self) -> list[str]:
+        principal = self.sanctioned_amount or self.disbursed_amount
+        if self.emi_amount and self.tenure_months and principal:
+            if self.emi_amount * self.tenure_months < principal - 1:
+                return [
+                    f"{int(self.tenure_months)} EMIs of {money(self.emi_amount)} repay less than "
+                    f"the loan amount of {money(principal)}."
+                ]
+        return []
 
 
 class CapitalGainEntry(Item):
@@ -830,6 +857,7 @@ class CapitalGainsStatement(ExtractedDetails):
 class IdentityDocument(ExtractedDetails):
     ISSUER_FIELD = "issuing_authority"
     DATE_FIELDS = ("issue_date",)
+    TRACKS_FINANCIAL_YEAR = False
 
     id_kind: Choice("pan", "aadhaar", "passport", "driving_licence", "voter_id", "other") = None
     holder_name: Text = None
@@ -858,6 +886,391 @@ class OtherDocument(ExtractedDetails):
     financial_year: YearRange = None
     key_amounts: list[LineItem] = Field(default_factory=list, max_length=30)
     key_dates: list[LabeledDate] = Field(default_factory=list, max_length=30)
+
+
+class SalaryComponent(Item):
+    label: Text = Field(None, description="Component name, e.g. Basic, HRA, Employer PF, Variable pay")
+    annual_amount: Money = None
+
+
+class OfferLetter(ExtractedDetails):
+    ISSUER_FIELD = "employer_name"
+    DATE_FIELDS = ("offer_date", "joining_date")
+    AMOUNT_FIELD = "annual_ctc"
+
+    employer_name: Text = None
+    candidate_name: Text = None
+    designation: Text = None
+    department: Text = None
+    work_location: Text = None
+    employment_type: Choice("full_time", "contract", "internship", "other") = None
+    offer_date: Day = None
+    joining_date: Day = None
+    acceptance_deadline: Day = None
+    currency: Identifier = None
+    annual_ctc: Money = Field(None, description="Total annual cost to company")
+    annual_fixed_pay: Money = None
+    annual_variable_pay: Money = None
+    joining_bonus: Money = None
+    retention_bonus: Money = None
+    stock_grant: Text = Field(None, description="ESOP or RSU grant as printed")
+    components: list[SalaryComponent] = Field(
+        default_factory=list, max_length=40, description="Annual CTC breakdown, excluding totals"
+    )
+    probation_months: Number = None
+    notice_period_days: Number = None
+
+    def rules(self) -> list[str]:
+        flags = []
+        parts = amount_total(self.components, "annual_amount")
+        if parts is not None and self.annual_ctc is not None and not close(parts, self.annual_ctc):
+            flags.append(f"CTC components add up to {money(parts)}, not the annual CTC {money(self.annual_ctc)}.")
+        if self.offer_date and self.joining_date and self.joining_date < self.offer_date:
+            flags.append("The joining date is before the offer date.")
+        return flags
+
+
+class EmploymentLetter(ExtractedDetails):
+    ISSUER_FIELD = "employer_name"
+    DATE_FIELDS = ("letter_date", "employment_to")
+    AMOUNT_FIELD = "revised_annual_ctc"
+    AMOUNT_REQUIRED = False
+    TRACKS_FINANCIAL_YEAR = False
+
+    letter_kind: Choice(
+        "appointment",
+        "experience",
+        "relieving",
+        "service_certificate",
+        "resignation",
+        "promotion",
+        "increment",
+        "confirmation",
+        "other",
+    ) = None
+    employer_name: Text = None
+    employee_name: Text = None
+    employee_id: Text = None
+    designation: Text = None
+    department: Text = None
+    letter_date: Day = None
+    employment_from: Day = Field(None, description="Date of joining")
+    employment_to: Day = Field(None, description="Last working day or relieving date")
+    reason: Text = Field(None, description="Reason for leaving, promotion, or change, if printed")
+    revised_annual_ctc: Money = Field(None, description="Promotion or increment letters only")
+    effective_date: Day = None
+    signatory: Text = Field(None, description="Name and title of the signing officer")
+
+
+class Resume(ExtractedDetails):
+    DATE_FIELDS = ("resume_date",)
+    TRACKS_FINANCIAL_YEAR = False
+
+    class Role(Item):
+        employer: Text = None
+        title: Text = None
+        location: Text = None
+        start: Month = Field(None, description="Start month, as printed")
+        end: Text = Field(None, description="End month as printed, or Present")
+
+    class Education(Item):
+        institution: Text = None
+        degree: Text = None
+        field_of_study: Text = None
+        graduation_year: Number = None
+        grade: Text = Field(None, description="CGPA or percentage as printed")
+
+    full_name: Text = None
+    email: Text = None
+    phone: Text = None
+    location: Text = None
+    headline: Text = Field(None, description="Title or one-line summary at the top")
+    total_experience_years: Number = None
+    current_employer: Text = None
+    current_title: Text = None
+    resume_date: Day = None
+    skills: list[str] = Field(default_factory=list, max_length=60)
+    experience: list[Role] = Field(default_factory=list, max_length=20)
+    education: list[Education] = Field(default_factory=list, max_length=10)
+    certifications: list[str] = Field(default_factory=list, max_length=20)
+    links: list[str] = Field(default_factory=list, max_length=10, description="LinkedIn, GitHub, portfolio")
+
+
+class EducationalCertificate(ExtractedDetails):
+    ISSUER_FIELD = "institution"
+    DATE_FIELDS = ("issue_date",)
+    TRACKS_FINANCIAL_YEAR = False
+
+    certificate_kind: Choice(
+        "degree",
+        "provisional_degree",
+        "marksheet",
+        "transcript",
+        "passing_certificate",
+        "school_certificate",
+        "leaving_certificate",
+        "admit_card",
+        "score_card",
+        "other",
+    ) = Field(
+        None,
+        description=(
+            "degree: the degree certificate itself; marksheet: statement of marks for one "
+            "semester or exam; transcript: all semesters; passing_certificate; "
+            "school_certificate: SSC or HSC board certificate; leaving_certificate; "
+            "admit_card: hall ticket; score_card: entrance exam result"
+        ),
+    )
+    holder_name: Text = None
+    institution: Text = Field(None, description="College, school, or exam body")
+    board_or_university: Text = None
+    program: Text = Field(None, description="Degree, class, or exam, e.g. M.Tech, B.E., SSC, HSC, GATE")
+    specialization: Text = None
+    term: Text = Field(None, description="Semester or year, e.g. Sem VIII")
+    roll_or_seat_number: Text = None
+    registration_number: Text = None
+    exam_month_year: Text = None
+    result: Text = Field(None, description="Pass, class, division, or rank as printed")
+    cgpa: Number = None
+    cgpa_scale: Number = Field(None, description="Maximum CGPA, usually 10")
+    percentage: Number = None
+    score: Text = Field(None, description="Score or rank on an entrance exam score card")
+    issue_date: Day = None
+
+    def rules(self) -> list[str]:
+        flags = []
+        if self.certificate_kind == "degree" and self.term:
+            flags.append(f"A degree certificate has no semester ({self.term}); this may be a marksheet.")
+        if self.percentage is not None and not 0 <= self.percentage <= 100:
+            flags.append(f"Percentage {self.percentage} is outside 0-100.")
+        if self.cgpa is not None and self.cgpa > (self.cgpa_scale or 10):
+            flags.append(f"CGPA {self.cgpa} is above the {self.cgpa_scale or 10} scale.")
+        return flags
+
+
+class Recognition(ExtractedDetails):
+    ISSUER_FIELD = "organization"
+    DATE_FIELDS = ("date",)
+    TRACKS_FINANCIAL_YEAR = False
+
+    recognition_kind: Choice(
+        "award", "recommendation", "appreciation", "course_certificate", "membership", "other"
+    ) = None
+    title: Text = Field(None, description="Award or certificate name")
+    recipient: Text = None
+    organization: Text = Field(None, description="Company or institution that issued it")
+    author: Text = Field(None, description="Person who wrote a recommendation, with their role")
+    date: Day = None
+    period: Text = Field(None, description="Quarter or year it covers, e.g. Q2 2022")
+    summary: Text = Field(None, description="What it recognizes, in one sentence")
+
+
+class RentalAgreement(ExtractedDetails):
+    ISSUER_FIELD = "landlord_name"
+    DATE_FIELDS = ("agreement_date", "agreement_from")
+    AMOUNT_FIELD = "monthly_rent"
+
+    landlord_name: Text = None
+    landlord_pan: Identifier = None
+    tenant_names: Text = None
+    property_address: Text = None
+    agreement_date: Day = None
+    agreement_from: Day = None
+    agreement_to: Day = None
+    lock_in_months: Number = None
+    monthly_rent: Money = None
+    maintenance_charges: Money = None
+    security_deposit: Money = None
+    annual_escalation_percent: Number = None
+    notice_period_days: Number = None
+    registered: Choice("yes", "no") = Field(None, description="Registered or notarized with stamp duty")
+    stamp_duty_paid: Money = None
+
+    LANDLORD_PAN_ANNUAL_RENT: ClassVar[float] = 100_000
+
+    def rules(self) -> list[str]:
+        if self.monthly_rent and self.monthly_rent * 12 > self.LANDLORD_PAN_ANNUAL_RENT and not self.landlord_pan:
+            return ["Annual rent exceeds 1,00,000, so an HRA claim needs the landlord's PAN, which was not found."]
+        return []
+
+
+class InsurancePolicy(ExtractedDetails):
+    ISSUER_FIELD = "insurer"
+    DATE_FIELDS = ("issue_date", "policy_from")
+    AMOUNT_FIELD = "total_premium"
+
+    policy_kind: Choice("health", "term_life", "life", "motor", "home", "travel", "other") = Field(
+        None, description="motor covers cars and two-wheelers; term_life and life are life cover"
+    )
+    insurer: Text = None
+    policy_number: Text = None
+    policyholder: Text = None
+    insured_members: Text = Field(None, description="People or vehicle covered")
+    nominee: Text = None
+    plan_name: Text = None
+    issue_date: Day = None
+    policy_from: Day = None
+    policy_to: Day = None
+    sum_insured: Money = Field(None, description="Sum insured or sum assured")
+    insured_declared_value: Money = Field(None, description="IDV, motor policies only")
+    vehicle_registration_number: Identifier = Field(None, description="Motor policies only")
+    vehicle_make_model: Text = Field(None, description="Motor policies only")
+    base_premium: Money = Field(None, description="Net premium before GST (all covers combined)")
+    gst: Money = None
+    total_premium: Money = Field(None, description="Premium including GST")
+    premium_frequency: Choice("single", "monthly", "quarterly", "half_yearly", "yearly") = None
+    tax_section: Text = Field(None, description="80D or 80C if the policy mentions one")
+
+    @model_validator(mode="after")
+    def vehicle_policies_are_motor(self) -> "InsurancePolicy":
+        """A policy that names an insured vehicle is a motor policy, whatever kind was read."""
+        if self.vehicle_registration_number and self.policy_kind != "motor":
+            self.policy_kind = "motor"
+        return self
+
+    def rules(self) -> list[str]:
+        flags = []
+        if None not in (self.base_premium, self.gst, self.total_premium):
+            if not close(self.base_premium + self.gst, self.total_premium):
+                flags.append(
+                    f"Premium plus GST ({money(self.base_premium + self.gst)}) does not equal "
+                    f"the total premium ({money(self.total_premium)})."
+                )
+        if self.policy_to and self.policy_to < date.today():
+            flags.append(f"This policy ended on {self.policy_to}.")
+        return flags
+
+
+class VehicleRegistration(ExtractedDetails):
+    ISSUER_FIELD = "registering_authority"
+    DATE_FIELDS = ("registration_date",)
+    TRACKS_FINANCIAL_YEAR = False
+
+    registration_number: Identifier = None
+    owner_name: Text = None
+    vehicle_class: Text = Field(None, description="e.g. motor cycle, LMV")
+    maker: Text = None
+    model: Text = None
+    fuel_type: Text = None
+    colour: Text = None
+    chassis_number: Identifier = None
+    engine_or_motor_number: Identifier = None
+    registration_date: Day = None
+    valid_until: Day = Field(None, description="Registration or fitness validity")
+    registering_authority: Text = Field(None, description="RTO")
+    financier: Text = Field(None, description="Hypothecation or lender, if printed")
+
+    def rules(self) -> list[str]:
+        if self.valid_until and self.valid_until < date.today():
+            return [f"This registration expired on {self.valid_until}."]
+        return []
+
+
+class BankAccountProof(ExtractedDetails):
+    ISSUER_FIELD = "bank_name"
+    DATE_FIELDS = ("issue_date",)
+    TRACKS_FINANCIAL_YEAR = False
+
+    proof_kind: Choice("cancelled_cheque", "cheque_book", "passbook", "bank_letter", "other") = Field(
+        None, description="cancelled_cheque: a cheque leaf marked CANCELLED"
+    )
+    bank_name: Text = None
+    account_holder: Text = None
+    account_number_last4: LastDigits = full_number("account_number", "Account number")
+    account_type: Text = None
+    ifsc: Identifier = None
+    micr: Identifier = None
+    branch: Text = None
+    issue_date: Day = None
+
+
+class Nominee(Item):
+    name: Text = None
+    relationship: Text = None
+    share_percent: Number = None
+
+
+class ProvidentFundDocument(ExtractedDetails):
+    """Nominations and UAN cards carry no balance, so only passbooks need one."""
+
+    ISSUER_FIELD = "establishment_name"
+    DATE_FIELDS = ("document_date", "date_of_joining")
+    AMOUNT_FIELD = "total_balance"
+    AMOUNT_REQUIRED = False
+    TRACKS_FINANCIAL_YEAR = False
+
+    document_kind: Choice(
+        "uan_card", "form_11", "form_2_nomination", "eps_form", "gratuity_form_f", "passbook", "other"
+    ) = Field(None, description="UAN card, Form 11 declaration, Form 2 or gratuity Form F nomination, passbook")
+    member_name: Text = None
+    uan: Identifier = None
+    pf_account_number: Identifier = None
+    establishment_name: Text = Field(None, description="Employer or establishment")
+    date_of_joining: Day = None
+    document_date: Day = None
+    previous_pf_account: Identifier = None
+    financial_year: YearRange = Field(None, description="Passbooks only")
+    nominees: list[Nominee] = Field(default_factory=list, max_length=10)
+    employee_share_balance: Money = Field(None, description="Passbooks only")
+    employer_share_balance: Money = Field(None, description="Passbooks only")
+    pension_balance: Money = Field(None, description="Passbooks only")
+    total_balance: Money = Field(None, description="Passbooks only")
+
+    def rules(self) -> list[str]:
+        shares = [nominee.share_percent for nominee in self.nominees if nominee.share_percent is not None]
+        if shares and not close(sum(shares), 100):
+            return [f"Nominee shares add up to {sum(shares):g}%, not 100%."]
+        return []
+
+    def review_flags(self) -> list[str]:
+        flags = super().review_flags()
+        if self.document_kind == "passbook" and self.total_balance is None:
+            flags.append("Total balance was not found.")
+        return flags
+
+
+class LegalDocument(ExtractedDetails):
+    ISSUER_FIELD = "sender"
+    DATE_FIELDS = ("document_date",)
+    AMOUNT_FIELD = "amount_claimed"
+    AMOUNT_REQUIRED = False
+    TRACKS_FINANCIAL_YEAR = False
+
+    legal_kind: Choice(
+        "legal_notice", "nda", "agreement", "affidavit", "power_of_attorney", "court_order", "complaint", "other"
+    ) = None
+    title: Text = None
+    sender: Text = Field(None, description="Sender, issuing party, or first party")
+    recipient: Text = Field(None, description="Addressee or second party")
+    advocate: Text = Field(None, description="Advocate or law firm, if any")
+    document_date: Day = None
+    reference_number: Text = None
+    subject: Text = None
+    demands: Text = Field(None, description="What the document requires, in one sentence")
+    response_deadline: Day = None
+    amount_claimed: Money = None
+    effective_from: Day = None
+    effective_to: Day = None
+
+
+class MedicalRecord(ExtractedDetails):
+    ISSUER_FIELD = "provider"
+    DATE_FIELDS = ("record_date",)
+    AMOUNT_FIELD = "amount_paid"
+    AMOUNT_REQUIRED = False
+    TRACKS_FINANCIAL_YEAR = False
+
+    record_kind: Choice(
+        "medical_report", "fitness_certificate", "prescription", "lab_report", "discharge_summary", "other"
+    ) = None
+    patient_name: Text = None
+    provider: Text = Field(None, description="Hospital, clinic, or lab")
+    doctor: Text = None
+    record_date: Day = None
+    purpose: Text = Field(None, description="e.g. pre-employment check, consultation")
+    findings: Text = Field(None, description="Diagnosis or conclusion in one sentence")
+    fit_for_work: Choice("yes", "no") = None
+    amount_paid: Money = Field(None, description="Bills only; preventive check-ups count for 80D")
 
 
 @dataclass(frozen=True)
@@ -901,7 +1314,8 @@ DOCUMENT_TYPES: dict[str, DocumentType] = {
             "tax_statement",
             "Tax statement",
             "tax statement",
-            "Form 26AS, Annual Information Statement (AIS), or Taxpayer Information Summary (TIS).",
+            "Form 26AS, Annual Information Statement (AIS), Taxpayer Information Summary (TIS), "
+            "or a yearly income-tax computation sheet.",
             TaxStatement,
         ),
         DocumentType(
@@ -915,7 +1329,9 @@ DOCUMENT_TYPES: dict[str, DocumentType] = {
             "bank_statement",
             "Bank statement",
             "bank statement",
-            "Savings or current account statement or passbook listing transactions.",
+            "Savings or current account statement or passbook pages listing dated transactions "
+            "and balances; a cheque or account confirmation without transactions is a "
+            "bank_account_proof.",
             BankStatement,
         ),
         DocumentType(
@@ -936,22 +1352,23 @@ DOCUMENT_TYPES: dict[str, DocumentType] = {
             "rent_receipt",
             "Rent receipt",
             "rent receipt",
-            "Receipt or agreement showing house rent paid to a landlord (HRA proof).",
+            "Monthly rent receipt signed by a landlord (HRA proof); a lease is a rental_agreement.",
             RentReceipt,
         ),
         DocumentType(
             "investment_proof",
             "Investment or deduction proof",
             "tax proof",
-            "Proof for a tax deduction: insurance premium receipt, ELSS, PPF, NPS, "
-            "tuition fees, donation receipt, and similar.",
+            "Payment proof for a tax deduction: insurance premium receipt, ELSS, PPF, NPS, "
+            "tuition fees, donation receipt, and similar; a policy schedule is an insurance_policy.",
             InvestmentProof,
         ),
         DocumentType(
             "loan_statement",
             "Loan statement",
             "loan",
-            "Loan account statement or interest certificate (home, education, vehicle, personal).",
+            "Loan agreement, sanction letter, repayment schedule, account statement, or interest "
+            "certificate (home, education, vehicle, personal).",
             LoanStatement,
         ),
         DocumentType(
@@ -965,14 +1382,102 @@ DOCUMENT_TYPES: dict[str, DocumentType] = {
             "identity_document",
             "Identity document",
             "identity",
-            "PAN card, Aadhaar, passport, driving licence, or voter ID.",
+            "PAN card, Aadhaar, passport, driving licence, or voter ID; a vehicle RC is a "
+            "vehicle_registration.",
             IdentityDocument,
+        ),
+        DocumentType(
+            "offer_letter",
+            "Offer letter",
+            "offer letter",
+            "Job offer from an employer with designation, joining date, and CTC breakdown.",
+            OfferLetter,
+        ),
+        DocumentType(
+            "employment_letter",
+            "Employment letter",
+            "employment",
+            "Appointment, experience, relieving, service certificate, resignation, promotion, "
+            "or increment letter about a job.",
+            EmploymentLetter,
+        ),
+        DocumentType(
+            "resume",
+            "Resume",
+            "resume",
+            "Resume or CV listing a person's experience, education, and skills.",
+            Resume,
+        ),
+        DocumentType(
+            "educational_certificate",
+            "Educational certificate",
+            "education",
+            "Degree, marksheet, transcript, school or board certificate, leaving certificate, "
+            "exam admit card, or score card.",
+            EducationalCertificate,
+        ),
+        DocumentType(
+            "recognition",
+            "Recognition",
+            "recognition",
+            "Award, appreciation, recommendation letter, or course or training certificate.",
+            Recognition,
+        ),
+        DocumentType(
+            "rental_agreement",
+            "Rental agreement",
+            "rental agreement",
+            "Lease or leave-and-licence agreement between a landlord and tenants.",
+            RentalAgreement,
+        ),
+        DocumentType(
+            "insurance_policy",
+            "Insurance policy",
+            "insurance",
+            "Insurance policy document or schedule: health, life, motor, home, or travel.",
+            InsurancePolicy,
+        ),
+        DocumentType(
+            "vehicle_registration",
+            "Vehicle registration",
+            "vehicle",
+            "Vehicle registration certificate (RC) or other vehicle ownership record.",
+            VehicleRegistration,
+        ),
+        DocumentType(
+            "bank_account_proof",
+            "Bank account proof",
+            "bank account",
+            "Cancelled cheque, cheque leaf or cheque book, passbook front page, or bank letter "
+            "confirming an account's number and IFSC, with no transaction list.",
+            BankAccountProof,
+        ),
+        DocumentType(
+            "provident_fund_document",
+            "Provident fund document",
+            "provident fund",
+            "EPFO UAN card, PF Form 11 or Form 2, EPS or gratuity nomination form, or PF passbook.",
+            ProvidentFundDocument,
+        ),
+        DocumentType(
+            "legal_document",
+            "Legal document",
+            "legal",
+            "Legal notice, NDA, contract, affidavit, power of attorney, court order, or complaint.",
+            LegalDocument,
+        ),
+        DocumentType(
+            "medical_record",
+            "Medical record",
+            "medical",
+            "Medical or fitness report, prescription, lab report, discharge summary, or hospital bill.",
+            MedicalRecord,
         ),
         DocumentType(
             "other",
             "Other document",
             None,
-            "Any other document, such as a letter, contract, or certificate.",
+            "Anything else, such as onboarding or verification forms and cover letters.",
             OtherDocument,
         ),
     )
@@ -981,7 +1486,7 @@ DOCUMENT_TYPES: dict[str, DocumentType] = {
 DocTypeName = Literal[tuple(DOCUMENT_TYPES)]  # type: ignore[valid-type]
 
 # Bump when a schema changes so backfill re-extracts documents stored under an older one.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def document_type(key: str) -> DocumentType:

@@ -65,20 +65,35 @@ reliable than asking a 7B model to reformat them.
 | --- | --- | --- | --- |
 | `payslip` | Monthly salary slip | Employer, employee, PAN, UAN, pay period, earnings and deduction lines, gross, deductions, TDS, PF, net pay | Gross − deductions = net pay; lines add up to totals; valid PAN |
 | `form_16` | Form 16 Part A and B | Employer TAN/PAN, employee PAN, AY/FY, regime, quarterly TDS, salary under 17(1)–(3), section 10 exemptions, standard deduction, Chapter VI-A deductions, taxable income, tax, cess, net tax payable | Quarterly TDS = total; salary head and tax computations add up; AY follows FY; employee PAN present |
-| `tax_statement` | Form 26AS, AIS, TIS | TDS entries by deductor and section, TCS, advance and self-assessment tax, reported salary, interest, dividends | TDS entries add up to the total |
+| `tax_statement` | Form 26AS, AIS, TIS, yearly tax computation sheets | TDS entries by deductor and section, TCS, advance and self-assessment tax, reported salary, interest, dividends; computed income and tax | TDS entries add up to the total |
 | `itr_acknowledgement` | ITR-V, return summary | ITR form, AY, acknowledgement number, filing date and section, income, tax paid, refund or balance | Not both a refund and tax due |
 | `bank_statement` | Savings or current account statement | Bank, holder, account (last 4), IFSC, period, opening and closing balance, totals, interest, up to 100 transactions | Opening + credits − debits = closing; running balance per transaction; dates within the period |
 | `credit_card_statement` | Card bill | Issuer, card (last 4), statement and due dates, total and minimum due, credit limit, up to 100 transactions | Minimum due ≤ total due; due date after statement date |
 | `invoice` | Invoices, receipts, utility and telecom bills | Vendor and GSTIN, invoice number and date, category, line items, CGST/SGST/IGST, total, payment status | Subtotal − discount + tax = total; GST parts = total tax; lines = subtotal |
 | `rent_receipt` | HRA rent receipts | Landlord and PAN, tenant, address, period, monthly rent, amount | Landlord PAN required above ₹1,00,000 annual rent |
 | `investment_proof` | 80C/80D/80G proofs: insurance, ELSS, PPF, NPS, tuition, donations | Kind, section, provider, policy or account, payment date, amount, eligible deduction | — |
-| `loan_statement` | Home or education loan interest certificate | Lender, borrowers, loan type, FY, EMI, principal and interest paid, outstanding | — |
+| `loan_statement` | Loan agreements, sanction letters, repayment schedules, interest certificates | Lender, borrowers, loan type, agreement date, amount, rate, tenure, EMI and its first and last dates, principal and interest paid, outstanding | EMIs × tenure cover the loan amount |
 | `capital_gains_statement` | Broker, AMC, CAMS, or KFintech gains statement | FY, short- and long-term gains, entries by security | Short + long term = total gain |
 | `identity_document` | PAN, Aadhaar, passport, licence, voter ID | Holder, number, date of birth, issue and expiry dates | Not expired |
-| `other` | Anything else | Issuer, recipient, date, reference, key amounts and dates | — |
+| `offer_letter` | Job offers | Employer, designation, location, offer and joining dates, annual CTC, fixed and variable pay, bonuses, stock grant, CTC components, probation, notice period | Components add up to the CTC; joining after the offer |
+| `employment_letter` | Appointment, experience, relieving, service certificate, resignation, promotion, increment letters | Letter kind, employer, employee and ID, designation, employment dates, reason, revised CTC, signatory | — |
+| `resume` | Resumes and CVs | Name, contact details, headline, experience years, roles (employer, title, months), education, skills, certifications, links | — |
+| `educational_certificate` | Degrees, marksheets, transcripts, SSC/HSC certificates, leaving certificates, hall tickets, score cards | Kind, holder, institution, board or university, program, semester, seat number, result, CGPA, percentage, issue date | Percentage within 0–100; CGPA within its scale; a degree has no semester |
+| `recognition` | Awards, appreciation, recommendations, course certificates | Kind, title, recipient, organization, author, date, period | — |
+| `rental_agreement` | Lease or leave-and-licence agreements | Landlord and PAN, tenants, address, term, lock-in, rent, maintenance, deposit, escalation, registration | Landlord PAN required above ₹1,00,000 annual rent |
+| `insurance_policy` | Health, life, motor, home, travel policy schedules | Kind, insurer, policy number, policyholder, insured, nominee, period, sum insured, IDV, vehicle, premium and GST | Premium + GST = total; policy not lapsed; a policy naming a vehicle is a motor policy |
+| `vehicle_registration` | Vehicle RC | Registration number, owner, class, maker, model, fuel, chassis and engine numbers, validity, RTO, financier | Registration not expired |
+| `bank_account_proof` | Cancelled cheques, cheque books, passbook front pages, bank letters | Bank, holder, account (last 4), type, IFSC, MICR, branch | Valid IFSC |
+| `provident_fund_document` | UAN card, PF Form 11 and Form 2, EPS and gratuity forms, PF passbook | Kind, member, UAN, PF account, establishment, joining date, nominees and shares, balances | Nominee shares total 100%; passbooks show a balance |
+| `legal_document` | Legal notices, NDAs, contracts, affidavits, powers of attorney, court orders | Kind, parties, advocate, date, reference, subject, demands, deadline, amount claimed, effective dates | — |
+| `medical_record` | Medical and fitness reports, prescriptions, lab reports, discharge summaries, bills | Kind, patient, provider, doctor, date, purpose, findings, fitness, amount paid | — |
+| `other` | Anything else, such as onboarding and verification forms and cover letters | Issuer, recipient, date, reference, key amounts and dates | — |
 
 Every type also gets generic checks: `*_from` dates before `*_to` dates, PAN,
-TAN, GSTIN, and IFSC formats, and the type's key amount being present. The
+TAN, GSTIN, and IFSC formats, and the type's key amount being present (for
+types where every such document has one). Identity, education, career, legal,
+medical, vehicle, PF, and bank-proof documents are not given a financial year
+from their dates, so a 2017 marksheet is not tagged `fy 2017-18`. The
 full JSON schema of each type is available from `list_document_types` and
 `GET /api/document-types`. Schemas live in `mcp/app/core/schemas.py`; bump
 `SCHEMA_VERSION` after changing one so `backfill_documents` re-extracts older

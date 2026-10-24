@@ -10,11 +10,21 @@ from fakes import PAYSLIP, ScriptedChat, image_bytes, payslip_details
 from app.core.models import DocumentClassification, DocumentContent, MetadataRules
 from app.core.schemas import (
     DOCUMENT_TYPES,
+    BankAccountProof,
     BankStatement,
+    EducationalCertificate,
     Form16,
+    IdentityDocument,
+    InsurancePolicy,
     Invoice,
     InvestmentProof,
+    LegalDocument,
+    LoanStatement,
+    OfferLetter,
+    ProvidentFundDocument,
+    RentalAgreement,
     RentReceipt,
+    Resume,
     financial_year_for,
 )
 from app.integrations.extraction import DocumentAnalyzer
@@ -173,6 +183,99 @@ class BusinessRuleTests(unittest.TestCase):
             {"statement_from": "2025-04-01", "statement_to": "2025-03-01", "closing_balance": 1}
         ).review_flags()
         self.assertTrue(any("is after" in flag for flag in flags))
+
+
+class CareerAndPersonalTypeTests(unittest.TestCase):
+    """The types added for employment, education, and personal records."""
+
+    def test_offer_letter_components_must_add_up_to_ctc(self):
+        offer = OfferLetter.model_validate(
+            {
+                "annual_ctc": "18,00,000",
+                "components": [
+                    {"label": "Basic", "annual_amount": 720000},
+                    {"label": "HRA", "annual_amount": 360000},
+                    {"label": "Total CTC", "annual_amount": 1800000},
+                ],
+                "offer_date": "01/06/2025",
+                "joining_date": "01/07/2025",
+            }
+        )
+        self.assertEqual(offer.key_facts().amount, 1800000.0)
+        [flag] = offer.review_flags()
+        self.assertIn("1,080,000.00", flag)
+
+    def test_non_financial_types_have_no_financial_year(self):
+        for details in (
+            EducationalCertificate.model_validate({"issue_date": "2017-09-12"}),
+            IdentityDocument.model_validate({"issue_date": "2021-07-19"}),
+            Resume.model_validate({"resume_date": "2026-09-18"}),
+        ):
+            with self.subTest(type(details).__name__):
+                self.assertIsNone(details.key_facts().financial_year)
+        self.assertEqual(RentalAgreement.model_validate({"agreement_date": "2026-02-17"}).key_facts().financial_year, "2025-26")
+
+    def test_resume_roles_normalize_months(self):
+        resume = Resume.model_validate(
+            {"experience": [{"employer": "MathCo", "start": "Jun 2025", "end": "Present"}], "skills": ["Python"]}
+        )
+        self.assertEqual(resume.experience[0].start, "2025-06")
+        self.assertEqual(resume.review_flags(), [])
+
+    def test_educational_grades_are_bounded(self):
+        flags = EducationalCertificate.model_validate({"percentage": 182, "cgpa": 11}).review_flags()
+        self.assertEqual(len(flags), 2)
+
+    def test_rental_agreement_needs_landlord_pan_above_limit(self):
+        self.assertTrue(RentalAgreement.model_validate({"monthly_rent": 30000}).review_flags())
+        self.assertFalse(RentalAgreement.model_validate({"monthly_rent": 30000, "landlord_pan": "ABCDE1234F"}).review_flags())
+
+    def test_insurance_premium_and_expiry(self):
+        policy = InsurancePolicy.model_validate(
+            {"policy_kind": "Two Wheeler Package", "base_premium": 3000, "gst": 540, "total_premium": 3600, "policy_to": "2020-01-01"}
+        )
+        flags = policy.review_flags()
+        self.assertTrue(any("does not equal the total premium" in flag for flag in flags))
+        self.assertTrue(any("ended" in flag for flag in flags))
+
+    def test_vehicle_policies_are_motor_policies(self):
+        policy = InsurancePolicy.model_validate({"policy_kind": "term_life", "vehicle_registration_number": "KA 01 AB 1234"})
+        self.assertEqual((policy.policy_kind, policy.vehicle_registration_number), ("motor", "KA01AB1234"))
+
+    def test_degree_with_a_semester_is_flagged(self):
+        flags = EducationalCertificate.model_validate({"certificate_kind": "degree", "term": "Semester VIII"}).review_flags()
+        self.assertTrue(any("may be a marksheet" in flag for flag in flags))
+
+    def test_loan_agreement_date_prefers_first_emi_over_period_end(self):
+        loan = LoanStatement.model_validate({"repayment_from": "05/07/2025", "period_to": "05/06/2028", "emi_amount": 6407})
+        self.assertEqual(loan.key_facts().financial_year, "2025-26")
+
+    def test_loan_agreement_emis_must_cover_the_loan(self):
+        loan = LoanStatement.model_validate({"emi_amount": 5000, "tenure_months": 36, "sanctioned_amount": 150000})
+        self.assertEqual(loan.review_flags(), [])
+        self.assertTrue(loan.model_copy(update={"tenure_months": 12}).review_flags())
+
+    def test_bank_proof_keeps_last_digits_and_checks_ifsc(self):
+        proof = BankAccountProof.model_validate({"account_number": "1234 5678 9012", "ifsc": "sbin0001234"})
+        self.assertEqual((proof.account_number_last4, proof.ifsc), ("9012", "SBIN0001234"))
+        self.assertTrue(BankAccountProof.model_validate({"ifsc": "SBIN1234"}).review_flags())
+
+    def test_pf_nominee_shares_and_optional_balance(self):
+        nomination = ProvidentFundDocument.model_validate(
+            {"document_kind": "Form 2", "nominees": [{"name": "A", "share_percent": 50}, {"name": "B", "share_percent": 50}]}
+        )
+        self.assertEqual(nomination.review_flags(), [])
+        passbook = ProvidentFundDocument.model_validate({"document_kind": "passbook"})
+        self.assertIn("Total balance was not found.", passbook.review_flags())
+
+    def test_legal_documents_do_not_require_an_amount(self):
+        self.assertEqual(LegalDocument.model_validate({"legal_kind": "Legal Notice"}).review_flags(), [])
+
+    def test_classification_offers_every_type(self):
+        schema = DocumentClassification.model_json_schema()
+        self.assertEqual(set(schema["properties"]["doc_type"]["enum"]), set(DOCUMENT_TYPES))
+        for key in ("resume", "offer_letter", "rental_agreement", "insurance_policy"):
+            self.assertIn(key, DOCUMENT_TYPES)
 
 
 class OllamaAdapterTests(unittest.TestCase):
