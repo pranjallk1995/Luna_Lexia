@@ -227,25 +227,14 @@ alternate; that costs a few seconds and needs no configuration.
 
 ### Google Drive import
 
-Lexia can import whole Drive folders after a one-time, read-only Google sign-in.
-It needs no settings of its own: the backend reuses the UI's Google OAuth client
-from `ui/.streamlit/secrets.toml` (mounted read-only into `mcp`), builds the
-callback from `MCP_PUBLIC_URL`, and derives the key that encrypts the stored
-token from `LUNALEXIA_API_TOKEN`.
-1. In Google Cloud, enable the **Google Drive API** on the UI's OAuth client's
-   project, and set its consent screen to **In production** (in *Testing*, Google
-   expires the Drive token after 7 days).
-2. Add `<MCP_PUBLIC_URL>/api/drive/callback` (for example
-   `http://localhost:18004/api/drive/callback`) to the client's authorized redirect URIs.
-3. Open **Upload → Google Drive** in the UI and choose **Connect Google Drive**.
+Drive import reuses the UI's Google OAuth client and needs no settings of its
+own. In Google Cloud, on that client's project:
+1. Enable the **Google Drive API**.
+2. Add `<MCP_PUBLIC_URL>/api/drive/callback` to the client's redirect URIs.
+3. Set the consent screen to **In production** (in *Testing*, Google expires the token after 7 days).
 
-Rotating `LUNALEXIA_API_TOKEN` disconnects Drive; connect again afterwards.
-
-The refresh token is stored encrypted in Postgres. Google Docs, Sheets, and
-Slides are exported as PDF. Files already imported at the same version are
-skipped, changed files are imported again, and password-protected PDFs are
-reported as `needs_password` so they can be retried with a password. One job
-imports at most 500 files (`max_import_items` in `mcp/app/core/config.py`).
+Then choose **Upload → Google Drive → Connect Google Drive**. Changing
+`LUNALEXIA_API_TOKEN` disconnects Drive.
 
 ### How bulk imports run and resume
 
