@@ -264,6 +264,17 @@ class LunaStyle:
             div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .lv-preview-details) {
                 padding:.4rem 0!important; margin-bottom:.6rem!important;
             }
+            /* Narrow screens (whatever the browser reports): stack the document dialog's
+               preview and details, so the name, title, summary, and tags sit below the page. */
+            div[data-testid="stElementContainer"]:has(.lv-preview-pages) { display:none!important; }
+            @media (max-width:768px) {
+                div[data-testid="stHorizontalBlock"]:has(> div[data-testid="stColumn"] .lv-preview-pages) {
+                    flex-direction:column!important; flex-wrap:nowrap!important;
+                }
+                div[data-testid="stHorizontalBlock"]:has(> div[data-testid="stColumn"] .lv-preview-pages) > div[data-testid="stColumn"] {
+                    width:100%!important; min-width:100%!important; flex:1 1 100%!important;
+                }
+            }
             /* Tables keep Add row and Search; hiding columns and CSV downloads only get in the way of edits. */
             div[data-testid="stElementToolbarButton"]:has(button[aria-label="Show/hide columns"]),
             div[data-testid="stElementToolbarButton"]:has(button[aria-label="Download as CSV"]) { display:none!important; }

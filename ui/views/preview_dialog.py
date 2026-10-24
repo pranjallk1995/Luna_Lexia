@@ -95,11 +95,14 @@ class DocumentPreviewDialog:
     ) -> None:
         self.files = context.files
         self.types = context.types
+        self.layout = context.layout
         self.actions = actions
         self.metadata_by_name = metadata_by_name
 
     def open(self, document_path: Path) -> None:
-        @st.dialog(self.files.display_name(document_path.name), width="large")
+        # Closing with the X reruns the app, so the server knows the dialog closed and the
+        # next thumbnail opens on its first click instead of needing a second one.
+        @st.dialog(self.files.display_name(document_path.name), width="large", on_dismiss="rerun")
         def show_document() -> None:
             self._render(document_path)
 
@@ -118,8 +121,13 @@ class DocumentPreviewDialog:
             st.rerun()
         st.session_state.setdefault(keys.generation, 0)
         metadata = self.metadata_by_name.get(document_path.name) or {}
-        page_column, detail_column = st.columns([5, 6], gap="medium")
+        # Phones get one column: the page preview first, then the name, title, summary, and tags.
+        if self.layout.is_mobile():
+            page_column, detail_column = st.container(), st.container()
+        else:
+            page_column, detail_column = st.columns([5, 6], gap="medium")
         with page_column:
+            self._marker(st, "lv-preview-pages")
             self._render_pages(keys, document_path, metadata)
         with detail_column:
             if self.actions.allows_renaming:
@@ -137,9 +145,11 @@ class DocumentPreviewDialog:
         page_count = int(metadata.get("page_count") or 1)
         page = 1
         if page_count > 1:
-            page = st.number_input(
-                f"Page (of {page_count})", min_value=1, max_value=page_count, step=1, key=keys.page
+            picker_column, count_column = st.columns([4, 1], vertical_alignment="center")
+            page = picker_column.number_input(
+                "Page", min_value=1, max_value=page_count, step=1, key=keys.page, label_visibility="collapsed"
             )
+            count_column.markdown(f'<div class="lv-card-facts">of {page_count}</div>', unsafe_allow_html=True)
         st.image(self.files.page(document_path, int(page) - 1), width="stretch")
 
     # Name
@@ -358,15 +368,15 @@ class DocumentPreviewDialog:
         flags = metadata.get("review_flags") or []
         if not flags:
             return
-        message_column, button_column = st.columns([5, 1.3], vertical_alignment="center")
+        message_column, button_column = st.columns([8, 1], vertical_alignment="center")
         message_column.warning(
             "**Check these details before relying on them:**\n"
             + "\n".join(f"- {flag}" for flag in flags),
             icon=":material/fact_check:",
         )
         button_column.button(
-            "Mark reviewed",
-            icon=":material/done_all:",
+            ":material/done_all:",
+            help="Mark reviewed: the details are correct, so clear these flags",
             key=f"review_{keys.name}",
             width="stretch",
             on_click=self._mark_reviewed,
@@ -475,7 +485,7 @@ class DocumentPreviewDialog:
             on_change=self._save_details,
             args=(keys, scalars, original),
             column_config={
-                "Field": st.column_config.TextColumn(width="medium"),
+                "Field": st.column_config.TextColumn(width="small"),
                 "Value": st.column_config.TextColumn(
                     help="Edit a value to correct it; clear it if the document does not show it."
                 ),
@@ -491,9 +501,10 @@ class DocumentPreviewDialog:
 
     def _render_reextract(self, keys: PreviewKeys, metadata: dict) -> None:
         current = metadata.get("doc_type") or "other"
-        type_column, button_column = st.columns([5, 1.3], vertical_alignment="bottom")
+        type_column, button_column = st.columns([8, 1], vertical_alignment="center")
         doc_type = type_column.selectbox(
             "Document type",
+            label_visibility="collapsed",
             options=self.types.keys(),
             index=self.types.keys().index(current) if current in self.types.keys() else 0,
             format_func=self.types.label,
@@ -501,7 +512,10 @@ class DocumentPreviewDialog:
             help="Choose another type if this one is wrong, then re-extract the details.",
         )
         if button_column.button(
-            "Re-extract", icon=":material/refresh:", key=f"reextract_{keys.name}", width="stretch"
+            ":material/refresh:",
+            help="Re-extract the details as the selected document type",
+            key=f"reextract_{keys.name}",
+            width="stretch",
         ):
             with st.spinner("Re-reading the document with the local model..."):
                 try:
