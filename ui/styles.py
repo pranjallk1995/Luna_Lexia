@@ -264,8 +264,9 @@ class LunaStyle:
             div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .lv-preview-details) {
                 padding:.4rem 0!important; margin-bottom:.6rem!important;
             }
-            /* Tables keep Add row, Search, and Download; hiding columns only confuses edits. */
-            div[data-testid="stElementToolbarButton"]:has(button[aria-label="Show/hide columns"]) { display:none!important; }
+            /* Tables keep Add row and Search; hiding columns and CSV downloads only get in the way of edits. */
+            div[data-testid="stElementToolbarButton"]:has(button[aria-label="Show/hide columns"]),
+            div[data-testid="stElementToolbarButton"]:has(button[aria-label="Download as CSV"]) { display:none!important; }
             div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .lv-preview-details):has(.lv-preview-removable-tags) {
                 margin-top:.8rem!important;
             }
