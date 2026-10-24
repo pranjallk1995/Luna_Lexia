@@ -5,7 +5,7 @@ from datetime import date
 
 from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, TextPart, UserPromptPart
 
-from fakes import PAYSLIP, ScriptedChat, image_bytes, payslip_details
+from fakes import PAYSLIP, FakeAnalyzer, ScriptedChat, StubParser, image_bytes, payslip_details
 
 from app.core.models import DocumentClassification, DocumentContent, MetadataRules
 from app.core.schemas import (
@@ -30,6 +30,7 @@ from app.core.schemas import (
 from app.integrations.extraction import DocumentAnalyzer
 from app.integrations.ollama import OllamaChat, strict_format
 from app.services.documents import DocumentReader
+from app.services.pipeline import DocumentPipeline
 
 CLASSIFICATION = {
     "doc_type": "payslip",
@@ -222,6 +223,13 @@ class CareerAndPersonalTypeTests(unittest.TestCase):
         self.assertEqual(resume.experience[0].start, "2025-06")
         self.assertEqual(resume.review_flags(), [])
 
+    def test_resume_dates_keep_their_printed_precision(self):
+        for printed, stored in (("2025", "2025"), ("Sep 2025", "2025-09"), ("18/09/2025", "2025-09-18"), ("soon", None)):
+            with self.subTest(printed):
+                self.assertEqual(Resume.model_validate({"resume_date": printed}).resume_date, stored)
+        self.assertIsNone(Resume.model_validate({"resume_date": "2025"}).key_facts().document_date)
+        self.assertEqual(str(Resume.model_validate({"resume_date": "18/09/2025"}).key_facts().document_date), "2025-09-18")
+
     def test_educational_grades_are_bounded(self):
         flags = EducationalCertificate.model_validate({"percentage": 182, "cgpa": 11}).review_flags()
         self.assertEqual(len(flags), 2)
@@ -332,51 +340,71 @@ class OllamaAdapterTests(unittest.TestCase):
         self.assertIn("valid number", chat[-1]["content"])
 
 
-class AnalyzerTests(unittest.TestCase):
-    def analyzer(self, replies):
-        self.chat = ScriptedChat(replies)
-        return DocumentAnalyzer(self.chat, MetadataRules(32, frozenset()), DocumentReader(), 24000, 3)
+class PipelineGraphTests(unittest.TestCase):
+    """The LangGraph pipeline, driven by the real agents with scripted model replies."""
 
-    def test_classifies_then_extracts_validated_details(self):
-        analysis = self.analyzer([CLASSIFICATION, PAYSLIP]).analyze(b"", CONTENT)
+    def run_pipeline(self, replies, content=CONTENT, data=None, doc_type=None):
+        self.chat = ScriptedChat(replies)
+        analyzer = DocumentAnalyzer(self.chat, DocumentReader(), 24000, 3)
+        pipeline = DocumentPipeline(StubParser(content), analyzer, MetadataRules(32, frozenset()))
+        analysis, _ = pipeline.run(data if data is not None else image_bytes(), doc_type)
+        return analysis
+
+    @staticmethod
+    def sent_images(request) -> bool:
+        return any(getattr(item, "is_image", False) for item in request[-1].parts[-1].content)
+
+    def test_text_route_classifies_extracts_and_tags(self):
+        analysis = self.run_pipeline([CLASSIFICATION, PAYSLIP])
         self.assertEqual(analysis.doc_type, "payslip")
-        self.assertEqual(analysis.tags, ["acme corp", "salary"])
         self.assertEqual(analysis.extracted["net_pay"], 80000.0)
-        self.assertEqual(analysis.facts.financial_year, "2024-25")
+        self.assertEqual(analysis.tags, ["acme corp", "salary", "payslip", "fy 2024-25"])
         self.assertEqual(analysis.review_flags, [])
         self.assertIn("ACME CORP PAYSLIP", str(self.chat.requests[0]))
+        self.assertFalse(self.sent_images(self.chat.requests[1]))
 
     def test_schema_errors_are_retried_with_feedback(self):
         broken = {**PAYSLIP, "earnings": "lots"}
-        analysis = self.analyzer([CLASSIFICATION, broken, PAYSLIP]).analyze(b"", CONTENT)
+        analysis = self.run_pipeline([CLASSIFICATION, broken, PAYSLIP])
         self.assertEqual(analysis.extracted["net_pay"], 80000.0)
         self.assertEqual(len(self.chat.requests), 3)
         feedback = OllamaChat.messages(self.chat.requests[2], None)[-1]
         self.assertEqual(feedback["role"], "user")
         self.assertIn("Input should be a valid array", feedback["content"])
 
-    def test_extraction_failure_is_flagged_not_raised(self):
-        replies = [CLASSIFICATION, "not json", "still not json", "nope"]
-        analysis = self.analyzer(replies).analyze(b"", CONTENT)
+    def test_failed_text_extraction_falls_back_to_page_images(self):
+        analysis = self.run_pipeline([CLASSIFICATION, "no", "still no", "nope", PAYSLIP])
+        self.assertEqual(analysis.extracted["net_pay"], 80000.0)
+        self.assertIsNone(analysis.extraction_error)
+        self.assertIn(DocumentPipeline.IMAGE_FALLBACK_FLAG, analysis.review_flags)
+        self.assertIn("needs review", analysis.tags)
+        self.assertTrue(self.sent_images(self.chat.requests[-1]))
+
+    def test_failure_on_both_routes_is_flagged_not_raised(self):
+        analysis = self.run_pipeline([CLASSIFICATION, *["not json"] * 6])
         self.assertEqual(analysis.extracted, {})
-        self.assertIsNotNone(analysis.extraction_error)
-        self.assertTrue(any("could not be extracted" in flag for flag in analysis.review_flags))
+        self.assertIn("could not be extracted", analysis.extraction_error)
+        self.assertIn(DocumentPipeline.FAILED_FLAG, analysis.review_flags)
+
+    def test_documents_without_text_go_straight_to_page_images(self):
+        analysis = self.run_pipeline([CLASSIFICATION, PAYSLIP], content=DocumentContent("PNG", [""], "test"))
+        self.assertIn(DocumentPipeline.NO_TEXT_FLAG, analysis.review_flags)
+        self.assertEqual(len(self.chat.requests), 2)
+        self.assertTrue(self.sent_images(self.chat.requests[1]))
 
     def test_hint_overrides_type_and_disagreement_is_flagged(self):
-        analysis = self.analyzer([CLASSIFICATION, {}]).analyze(b"", CONTENT, "invoice")
+        analysis = self.run_pipeline([CLASSIFICATION, {}], doc_type="invoice")
         self.assertEqual(analysis.doc_type, "invoice")
         self.assertTrue(any("reads like a Payslip" in flag for flag in analysis.review_flags))
 
-    def test_documents_without_text_are_sent_as_page_images(self):
-        content = DocumentContent("PNG", [""], "test")
-        analysis = self.analyzer([CLASSIFICATION, PAYSLIP]).analyze(image_bytes(), content)
-        self.assertIn("No text could be read", " ".join(analysis.review_flags))
-        [request] = self.chat.requests[0]
-        self.assertTrue(any(getattr(item, "is_image", False) for item in request.parts[-1].content))
-
     def test_low_confidence_is_flagged(self):
-        analysis = self.analyzer([{**CLASSIFICATION, "confidence": 0.3}, PAYSLIP]).analyze(b"", CONTENT)
+        analysis = self.run_pipeline([{**CLASSIFICATION, "confidence": 0.3}, PAYSLIP])
         self.assertTrue(any("low confidence" in flag for flag in analysis.review_flags))
+
+    def test_graph_shape(self):
+        pipeline = DocumentPipeline(StubParser(CONTENT), FakeAnalyzer(), MetadataRules(32, frozenset()))
+        nodes = set(pipeline.graph.get_graph().nodes)
+        self.assertTrue({"parse", "classify", "extract_text", "extract_images", "validate", "tag"} <= nodes)
 
 
 if __name__ == "__main__":

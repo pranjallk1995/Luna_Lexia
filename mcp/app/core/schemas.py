@@ -108,6 +108,18 @@ def parse_month(value: Any) -> str | None:
     return f"{parsed_date.year:04d}-{parsed_date.month:02d}" if parsed_date else None
 
 
+def parse_partial_date(value: Any) -> str | None:
+    """Keep a date at the precision printed: ``2025``, ``2025-09``, or ``2025-09-18``."""
+    if value is None:
+        return None
+    text = re.sub(r"\s+", " ", str(value)).strip()
+    if re.fullmatch(r"(19|20)\d{2}", text):
+        return text
+    if full := parse_date(text):
+        return full.isoformat()
+    return parse_month(text)
+
+
 def parse_year_range(value: Any) -> str | None:
     """Normalize ``FY 2024-2025``, ``2024–25``, or ``2024/25`` to ``2024-25``."""
     if value is None:
@@ -157,6 +169,7 @@ Money = Annotated[float | None, BeforeValidator(parse_amount)]
 Number = Annotated[float | None, BeforeValidator(parse_amount)]
 Day = Annotated[date | None, BeforeValidator(parse_date)]
 Month = Annotated[str | None, BeforeValidator(parse_month)]
+PartialDay = Annotated[str | None, BeforeValidator(parse_partial_date)]
 YearRange = Annotated[str | None, BeforeValidator(parse_year_range)]
 Regime = Choice("old", "new")
 
@@ -988,12 +1001,16 @@ class Resume(ExtractedDetails):
     total_experience_years: Number = None
     current_employer: Text = None
     current_title: Text = None
-    resume_date: Day = None
+    resume_date: PartialDay = Field(None, description="Date, month, or year the resume shows")
     skills: list[str] = Field(default_factory=list, max_length=60)
     experience: list[Role] = Field(default_factory=list, max_length=20)
     education: list[Education] = Field(default_factory=list, max_length=10)
     certifications: list[str] = Field(default_factory=list, max_length=20)
     links: list[str] = Field(default_factory=list, max_length=10, description="LinkedIn, GitHub, portfolio")
+
+    def reference_date(self) -> date | None:
+        """Only a full resume date is a document date; a month or a year is not."""
+        return parse_date(self.resume_date) if self.resume_date and len(self.resume_date) == 10 else None
 
 
 class EducationalCertificate(ExtractedDetails):
@@ -1289,7 +1306,7 @@ class DocumentType:
             "doc_type": self.key,
             "label": self.label,
             "description": self.description,
-            "fields": self.schema.model_json_schema(),
+            "fields": self.schema.model_json_schema(mode="serialization"),
         }
 
 

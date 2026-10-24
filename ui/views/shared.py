@@ -54,6 +54,15 @@ class DocumentTypes:
         """Return the type's top-level field schemas in their declared order."""
         return self.types.get(doc_type, {}).get("fields", {}).get("properties", {})
 
+    def item_columns(self, doc_type: str, field: str) -> list[str] | None:
+        """Columns of a list field's rows, or None when its items are plain values."""
+        schema = self.types.get(doc_type, {}).get("fields", {})
+        options = [schema["properties"][field], *schema["properties"][field].get("anyOf", [])]
+        items = next((option["items"] for option in options if option.get("type") == "array"), {})
+        if "$ref" in items:
+            items = schema.get("$defs", {}).get(items["$ref"].rsplit("/", 1)[-1], {})
+        return list(items["properties"]) if "properties" in items else None
+
 
 @dataclass(frozen=True)
 class LexiaContext:

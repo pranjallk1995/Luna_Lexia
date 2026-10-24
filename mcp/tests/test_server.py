@@ -210,13 +210,13 @@ class MCPToolTests(ServerTestCase):
 
     def test_slow_upload_does_not_block_event_loop(self) -> None:
         analyzer = self.service.indexer.analyzer
-        original = analyzer.analyze
+        original = analyzer.classify
 
         def slow(*args):
             time.sleep(0.5)
             return original(*args)
 
-        analyzer.analyze = slow
+        analyzer.classify = slow
 
         async def scenario():
             upload = asyncio.create_task(

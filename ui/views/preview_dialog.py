@@ -3,13 +3,13 @@
 import html
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import httpx
 import pandas as pd
 import streamlit as st
 
 from config import UIConfig
+from domain.tables import VALUE_COLUMN, apply_edits, cell, table_rows, table_values
 from services.api import LunaLexiaAPI
 from views.actions import GalleryActions
 from views.shared import LexiaContext
@@ -63,6 +63,9 @@ class PreviewKeys:
     @property
     def details_editor(self) -> str:
         return f"preview_details_{self.name}_{st.session_state[self.generation]}"
+
+    def list_editor(self, field: str) -> str:
+        return f"preview_list_{field}_{self.name}_{st.session_state[self.generation]}"
 
     @property
     def details_error(self) -> str:
@@ -382,14 +385,6 @@ class DocumentPreviewDialog:
             option.get("type") == "array" for option in schema.get("anyOf", [])
         )
 
-    @staticmethod
-    def _cell(value: Any) -> str:
-        if value is None:
-            return ""
-        if isinstance(value, float) and value.is_integer():
-            return str(int(value))
-        return str(value)
-
     def _save_details(self, keys: PreviewKeys, fields: list[str], original: list[str]) -> None:
         """Send only the fields whose cells changed; the backend parses and validates them."""
         edited = st.session_state.get(keys.details_editor) or {}
@@ -414,6 +409,42 @@ class DocumentPreviewDialog:
         finally:
             st.session_state[keys.generation] += 1
 
+    def _save_list(self, keys: PreviewKeys, field: str, columns: list[str] | None, rows: list[dict]) -> None:
+        """Save a list field after its rows were edited, added, or deleted."""
+        state = st.session_state.get(keys.list_editor(field)) or {}
+        values = table_values(apply_edits(rows, state), columns)
+        if values == table_values(rows, columns):
+            return
+        try:
+            self._save(keys.name, extracted={field: values})
+            st.session_state[keys.details_error] = None
+        except httpx.HTTPError as error:
+            st.session_state[keys.details_error] = LunaLexiaAPI.error_message(
+                error, f"Could not save the corrected {self._label(field).lower()}."
+            )
+        finally:
+            st.session_state[keys.generation] += 1
+
+    def _render_list(self, keys: PreviewKeys, doc_type: str, field: str, values: list | None) -> None:
+        """An editable table for one list field; rows can be edited, added, and deleted."""
+        columns = self.types.item_columns(doc_type, field)
+        names = columns or [VALUE_COLUMN]
+        rows = table_rows(values, columns)
+        with st.expander(f"{self._label(field)} ({len(rows)})"):
+            st.data_editor(
+                pd.DataFrame(rows, columns=names),
+                key=keys.list_editor(field),
+                num_rows="dynamic",
+                hide_index=True,
+                width="stretch",
+                on_change=self._save_list,
+                args=(keys, field, columns, rows),
+                column_config={
+                    name: st.column_config.TextColumn(VALUE_COLUMN if columns is None else self._label(name))
+                    for name in names
+                },
+            )
+
     def _render_details(self, keys: PreviewKeys, metadata: dict) -> None:
         doc_type = metadata.get("doc_type") or "other"
         extracted = metadata.get("extracted") or {}
@@ -432,7 +463,7 @@ class DocumentPreviewDialog:
             st.error(f"Extraction failed: {metadata['extraction_error']}", icon=":material/error:")
         schemas = self.types.fields(doc_type)
         scalars = [field for field, schema in schemas.items() if not self._is_list(schema)]
-        original = [self._cell(extracted.get(field)) for field in scalars]
+        original = [cell(extracted.get(field)) for field in scalars]
         st.data_editor(
             pd.DataFrame(
                 {"Field": [self._label(field) for field in scalars], "Value": original}
@@ -453,10 +484,8 @@ class DocumentPreviewDialog:
         if st.session_state.get(keys.details_error):
             st.error(st.session_state[keys.details_error])
         for field, schema in schemas.items():
-            rows = extracted.get(field) if self._is_list(schema) else None
-            if rows:
-                with st.expander(f"{self._label(field)} ({len(rows)})"):
-                    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+            if self._is_list(schema):
+                self._render_list(keys, doc_type, field, extracted.get(field))
 
     # Re-extraction
 

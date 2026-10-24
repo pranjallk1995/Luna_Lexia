@@ -14,8 +14,8 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai.models.function import FunctionModel
 
-from app.core.models import DocumentAnalysis, DocumentContent, MetadataRules
-from app.core.schemas import DOCUMENT_TYPES, KeyFacts, Payslip
+from app.core.models import DocumentClassification, DocumentContent
+from app.core.schemas import Payslip
 from app.data.repositories import PUBLIC_DOCUMENT_PATH
 from app.services.documents import DocumentReader
 
@@ -200,29 +200,38 @@ class FakeParser:
 
 
 class FakeAnalyzer:
-    """Return a deterministic payslip analysis (or the hinted type) without a model."""
+    """Classify as a payslip (or the hinted type) and extract fixed details, without a model."""
 
     model = "test-model"
 
     def __init__(self) -> None:
-        self.rules = MetadataRules(32, frozenset())
         self.reader = DocumentReader()
         self.extracted = dict(PAYSLIP)
 
-    def analyze(self, data, content, doc_type=None):
-        del data
-        kind = doc_type or "payslip"
-        details = DOCUMENT_TYPES[kind].schema.model_validate(self.extracted if kind == "payslip" else {})
-        return DocumentAnalysis(
-            doc_type=kind,
+    def classify(self, data, content, hint):
+        del data, content
+        return DocumentClassification(
+            doc_type=hint.key if hint else "payslip",
             title="Acme Corp payslip, March 2025",
             summary="Salary slip for Asha Rao from Acme Corp.",
             tags=["acme corp", "salary"],
             confidence=0.9,
-            extracted=details.model_dump(mode="json"),
-            facts=details.key_facts() if kind == "payslip" else KeyFacts(),
-            review_flags=details.review_flags() if kind == "payslip" else [],
         )
+
+    def extract(self, data, content, kind, from_images=False):
+        del data, content, from_images
+        return kind.schema.model_validate(self.extracted if kind.key == "payslip" else {})
+
+
+class StubParser:
+    """Return fixed parsed content, so graph tests control what the agents see."""
+
+    def __init__(self, content: DocumentContent) -> None:
+        self.content = content
+
+    def parse(self, data, file_format):
+        del data, file_format
+        return self.content
 
 
 class ScriptedChat:

@@ -4,7 +4,6 @@ import uvicorn
 from mcp.server.fastmcp import FastMCP
 
 from app.core.config import AppConfig
-from app.core.models import MetadataRules
 from app.data.database import Database
 from app.data.repositories import DocumentRepository, PublicURLRepository
 from app.integrations.extraction import DocumentAnalyzer
@@ -33,7 +32,6 @@ class LunaLexiaApplication:
             DoclingParser(reader, config.max_stored_text_chars, config.docling_device),
             DocumentAnalyzer(
                 OllamaChat(config.ollama_url, config.document_model, config.context_tokens),
-                MetadataRules(config.max_tags, config.search_stop_words),
                 reader,
                 config.max_prompt_chars,
                 config.max_vision_pages,

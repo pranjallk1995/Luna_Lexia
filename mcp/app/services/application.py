@@ -6,7 +6,7 @@ import hashlib
 import re
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -30,7 +30,8 @@ from app.data.repositories import DocumentRepository, PublicURLRepository, Row
 from app.data.storage import DocumentStorage
 from app.integrations.extraction import DocumentAnalyzer
 from app.integrations.parsing import DoclingParser
-from app.services.documents import DocumentPayloadDecoder, DocumentReader, PreviewRenderer
+from app.services.documents import DocumentPayloadDecoder, PreviewRenderer
+from app.services.pipeline import DocumentPipeline
 from app.services.downloads import DownloadStore, DownloadTicket
 from app.services.uploads import UploadLinkStore
 
@@ -147,44 +148,29 @@ class PublicURLService:
 
 
 class DocumentIndexer:
-    """Parse, analyze, and validate document bytes, then persist the result.
+    """Run the analysis graph on document bytes and persist the result.
 
-    The pipeline is Docling (text, OCR, tables) -> classification and
-    extraction agents -> schema and business-rule validation -> PostgreSQL.
+    The graph (``DocumentPipeline``) is Docling -> classification -> extraction,
+    with a page-image fallback -> business-rule validation -> tagging.
     """
 
     def __init__(
         self,
         storage: DocumentStorage,
         documents: DocumentRepository,
-        parser: DoclingParser,
-        analyzer: DocumentAnalyzer,
+        pipeline: DocumentPipeline,
         urls: PublicURLService,
-        rules: MetadataRules,
     ) -> None:
         self.storage = storage
         self.documents = documents
-        self.parser = parser
-        self.analyzer = analyzer
-        self.reader = analyzer.reader
+        self.pipeline = pipeline
+        self.analyzer = pipeline.analyzer
+        self.reader = pipeline.analyzer.reader
         self.urls = urls
-        self.rules = rules
-
-    def system_tags(self, analysis: DocumentAnalysis) -> list[str]:
-        """Tag every document with its type and financial year for easy filtering."""
-        tags = []
-        if DOCUMENT_TYPES[analysis.doc_type].tag:
-            tags.append(DOCUMENT_TYPES[analysis.doc_type].tag)
-        if analysis.facts.financial_year:
-            tags.append(f"fy {analysis.facts.financial_year}")
-        return tags
 
     def analyze(self, data: bytes, doc_type: str | None = None) -> tuple[DocumentAnalysis, DocumentContent]:
-        """Parse and analyze bytes; return the analysis and the pages it was read from."""
-        content = self.parser.parse(data, self.reader.file_format(data))
-        analysis = self.analyzer.analyze(data, content, doc_type)
-        tags = self.rules.with_tags(analysis.tags, self.system_tags(analysis))
-        return replace(analysis, tags=self.rules.with_review_tag(tags, analysis.review_flags)), content
+        """Analyze bytes; return the analysis and the pages it was read from."""
+        return self.pipeline.run(data, doc_type)
 
     def store(self, name: str, data: bytes, analysis: DocumentAnalysis, content: DocumentContent) -> Row:
         record = DocumentRecord(
@@ -317,6 +303,8 @@ class DocumentCollectionService:
                 )
             extracted, error = {**extracted, **change.extracted}, None
         details = schema.model_validate(extracted)
+        if change.extracted:
+            self.require_understood(change.extracted, details.model_dump(mode="json"))
         flags = current["review_flags"]
         if change.mark_reviewed:
             flags = []
@@ -333,6 +321,27 @@ class DocumentCollectionService:
             details.key_facts() if extracted else self.facts_of(current),
             hidden=self.HIDDEN,
         )
+
+    @classmethod
+    def require_understood(cls, supplied: Any, saved: Any, path: str = "") -> None:
+        """Reject an edit whose value the schema could not read, instead of storing null.
+
+        Model output is parsed leniently (an unreadable date becomes null), but a
+        value a person typed must not silently disappear.
+        """
+        if isinstance(supplied, dict):
+            for key, value in supplied.items():
+                inner = saved.get(key) if isinstance(saved, dict) else None
+                cls.require_understood(value, inner, f"{path}.{key}" if path else key)
+        elif isinstance(supplied, list):
+            for index, value in enumerate(supplied):
+                inner = saved[index] if isinstance(saved, list) and index < len(saved) else None
+                cls.require_understood(value, inner, f"{path}[{index + 1}]")
+        elif supplied not in (None, "") and saved is None:
+            raise ValueError(
+                f"{path}: {supplied!r} could not be read. Dates look like 31/03/2025 or 2025-03-31, "
+                "amounts like 1,23,456.50, and financial years like 2024-25."
+            )
 
     @staticmethod
     def facts_of(row: Row) -> KeyFacts:
@@ -955,7 +964,7 @@ class LexiaService:
         storage = DocumentStorage(config.document_dir, set(config.allowed_formats))
         urls = PublicURLService(public_urls)
         urls.seed(config.public_base_url)
-        indexer = DocumentIndexer(storage, documents, parser, analyzer, urls, rules)
+        indexer = DocumentIndexer(storage, documents, DocumentPipeline(parser, analyzer, rules), urls)
         visible = VisibleDocumentService(
             storage,
             documents,

@@ -158,6 +158,31 @@ class MetadataTests(LexiaServiceTestCase):
         self.assertEqual(result["financial_year"], "2025-26")
         self.assertIn("needs review", result["tags"])
 
+    def test_list_fields_are_replaced_parsed_and_rechecked(self):
+        result = self.visible.update_metadata(
+            "march.pdf",
+            MetadataChange(
+                extracted={
+                    "earnings": [{"label": "Basic", "amount": "60,000"}, {"label": "HRA", "amount": "40,000"}],
+                    "deductions": [{"label": "PF", "amount": "21,000"}],
+                }
+            ),
+        )
+        self.assertEqual([item["amount"] for item in result["extracted"]["earnings"]], [60000.0, 40000.0])
+        [flag] = result["review_flags"]
+        self.assertIn("Deduction lines add up to 21,000.00", flag)
+
+    def test_unreadable_edits_are_refused_not_blanked(self):
+        with self.assertRaisesRegex(ValueError, "pay_date: 'someday' could not be read"):
+            self.visible.update_metadata("march.pdf", MetadataChange(extracted={"pay_date": "someday"}))
+        with self.assertRaisesRegex(ValueError, r"earnings\[2\]\.amount"):
+            self.visible.update_metadata(
+                "march.pdf",
+                MetadataChange(extracted={"earnings": [{"label": "Basic", "amount": "1"}, {"label": "HRA", "amount": "lots"}]}),
+            )
+        cleared = self.visible.update_metadata("march.pdf", MetadataChange(extracted={"pay_date": None}))
+        self.assertIsNone(cleared["extracted"]["pay_date"])
+
     def test_unknown_extracted_fields_are_rejected(self):
         with self.assertRaisesRegex(ValueError, "not payslip fields"):
             self.visible.update_metadata("march.pdf", MetadataChange(extracted={"bonus": 1}))
@@ -236,7 +261,8 @@ class FilterAndSearchTests(LexiaServiceTestCase):
         self.assertEqual(stats["total_documents"], 2)
         self.assertEqual(stats["by_doc_type"], {"payslip": 1, "form_16": 1})
         self.assertEqual(stats["by_financial_year"], {"unknown": 1, "2024-25": 1})
-        self.assertEqual(stats["needs_review_count"], 1)
+        # The corrected payslip, and the Form 16 whose empty details miss the employee PAN.
+        self.assertEqual(stats["needs_review_count"], 2)
 
 
 class RenameAndRemoveTests(LexiaServiceTestCase):

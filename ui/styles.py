@@ -260,6 +260,15 @@ class LunaStyle:
                 color:var(--lv-muted)!important; opacity:1!important;
             }
             div[data-testid="stVerticalBlockBorderWrapper"]:has(.lv-preview-details) { margin-top:.45rem; }
+            /* Borderless st.container() rows render as a bare stVerticalBlock: space the name, title, summary, and tag rows apart. */
+            div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .lv-preview-details) {
+                padding:.4rem 0!important; margin-bottom:.6rem!important;
+            }
+            /* Tables keep Add row, Search, and Download; hiding columns only confuses edits. */
+            div[data-testid="stElementToolbarButton"]:has(button[aria-label="Show/hide columns"]) { display:none!important; }
+            div[data-testid="stVerticalBlock"]:has(> div[data-testid="stElementContainer"] .lv-preview-details):has(.lv-preview-removable-tags) {
+                margin-top:.8rem!important;
+            }
             div[data-testid="stExpander"] { overflow:hidden; border-color:var(--lv-border); border-radius:.35rem; background:rgba(255,255,255,.045); }
             div[data-testid="stAlert"] { border-radius:.85rem; border-color:var(--lv-border); }
             div[data-testid="stForm"] { padding:1.25rem; border-color:var(--lv-border); border-radius:14px; background:rgba(255,255,255,.055); }

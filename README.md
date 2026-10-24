@@ -7,7 +7,7 @@
 ![PostgreSQL included](https://img.shields.io/badge/PostgreSQL-included-4169E1?logo=postgresql&logoColor=white)
 ![Status: usable](https://img.shields.io/badge/Status-usable-2EA043)
 
-## Store, read, and search your financial documents with local AI
+## Store, read, and search your financial documents with LLMs
 
 > **Work in progress:** Luna Lexia is a local-first and desktop-first document vault under active development.
 
@@ -38,6 +38,18 @@ Upload (UI, MCP tool, upload link, or HTTP API)
                 then business rules that produce review flags
   -> store      file in the document volume, record and page text in PostgreSQL
 ```
+
+Parsing through validation runs as a LangGraph state graph
+(`mcp/app/services/pipeline.py`):
+
+```text
+parse ─▶ classify ─┬─▶ extract_text ──┬────────────────────▶ validate ─▶ tag
+                   │                  └─▶ extract_images ─▶─┘
+                   └─▶ extract_images (no readable text) ──▶─┘
+```
+
+When extraction from the parsed text fails, the graph tries once more from page
+images before giving up; a document read that way is flagged for review.
 
 - **Docling** turns PDFs and photos into Markdown page by page, so scans become
   text (RapidOCR) and every page stays citable. If Docling fails, the PDF's own
