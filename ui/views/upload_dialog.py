@@ -11,6 +11,7 @@ import httpx
 import streamlit as st
 
 from services.api import LunaLexiaAPI
+from views.drive_panel import DriveImportPanel
 from views.shared import DocumentLabel, LexiaTab
 
 
@@ -22,7 +23,11 @@ class UploadDialog(LexiaTab):
     def open(self) -> None:
         @st.dialog("Upload documents", width="large")
         def upload_dialog() -> None:
-            self.render()
+            device_tab, drive_tab = st.tabs([":material/devices: This device", ":material/add_to_drive: Google Drive"])
+            with device_tab:
+                self.render()
+            with drive_tab:
+                DriveImportPanel(self.context).render()
 
         upload_dialog()
 

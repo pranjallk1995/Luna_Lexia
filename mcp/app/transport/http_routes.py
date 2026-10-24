@@ -6,6 +6,7 @@ Only health, icons, public document links (unguessable IDs), and single-use
 upload and download links are open.
 """
 
+import html
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -124,6 +125,8 @@ class LexiaHTTPRoutes:
         self._register_downloads()
         self._register_uploads()
         self._register_hidden_documents()
+        if self.service.imports is not None:
+            self._register_imports()
 
     async def health(self, request: Request) -> dict:
         return {"status": "ok", "service": "luna-lexia"}
@@ -301,6 +304,84 @@ class LexiaHTTPRoutes:
 
         self.route("GET", "/api/favorites", favorites)
         self.route("POST", "/api/favorites", update_favorites)
+
+    def _register_imports(self) -> None:
+        imports, downloads = self.service.imports, self.service.downloads
+
+        def page(title: str, message: str) -> HTMLResponse:
+            return HTMLResponse(
+                f"<!doctype html><title>Luna Lexia</title><body style='font-family:sans-serif;padding:2rem'>"
+                f"<h2>{html.escape(title)}</h2><p>{html.escape(message)}</p></body>"
+            )
+
+        async def status(request: Request):
+            return imports.drive_status()
+
+        async def authorization_url(request: Request):
+            return {"url": imports.authorization_url()}
+
+        async def callback(request: Request):
+            if request.query_params.get("error"):
+                return page("Google Drive was not connected", request.query_params["error"])
+            try:
+                email = await anyio.to_thread.run_sync(
+                    imports.connect, str(request.url), request.query_params.get("state", "")
+                )
+            except Exception as error:  # noqa: BLE001 - shown to the person who signed in
+                return page("Google Drive was not connected", str(error))
+            return page("Google Drive connected to Luna Lexia", f"Signed in as {email}. You can close this tab.")
+
+        async def disconnect(request: Request):
+            return imports.disconnect()
+
+        async def folders(request: Request):
+            parent = request.query_params.get("parent") or None
+            return {"folders": await anyio.to_thread.run_sync(imports.drive_folders, parent)}
+
+        async def drive_folder(request: Request):
+            payload = await self.payload(request)
+            return await anyio.to_thread.run_sync(
+                imports.import_drive_folder,
+                payload.get("folder", ""),
+                bool(payload.get("recursive", True)),
+                payload.get("doc_type") or None,
+            )
+
+        async def drive_files(request: Request):
+            payload = await self.payload(request)
+            return await anyio.to_thread.run_sync(imports.import_drive_files, payload.get("files") or [])
+
+        async def batch(request: Request):
+            payload = await self.payload(request)
+            return await anyio.to_thread.run_sync(imports.upload_batch, payload.get("items") or [])
+
+        async def jobs(request: Request):
+            return {"jobs": imports.jobs_list(int(request.query_params.get("limit", 10)))}
+
+        async def job(request: Request):
+            return imports.job(request.path_params["job_id"])
+
+        async def bulk_download(request: Request):
+            payload = await self.payload(request)
+            return await anyio.to_thread.run_sync(
+                downloads.create_zip_for,
+                payload.get("names"),
+                payload.get("doc_types"),
+                payload.get("financial_year"),
+                payload.get("tags"),
+            )
+
+        self.route("GET", "/api/drive/status", status)
+        self.route("GET", "/api/drive/authorization-url", authorization_url)
+        self.route("GET", "/api/drive/callback", callback, protected=False)
+        self.route("POST", "/api/drive/disconnect", disconnect)
+        self.route("GET", "/api/drive/folders", folders)
+        self.route("POST", "/api/imports/drive-folder", drive_folder, 201)
+        self.route("POST", "/api/imports/drive-files", drive_files, 201)
+        self.route("POST", "/api/imports/batch", batch, 201)
+        self.route("GET", "/api/imports", jobs)
+        self.route("GET", "/api/imports/{job_id}", job)
+        self.route("POST", "/api/downloads", bulk_download)
 
     def _register_hidden_documents(self) -> None:
         hidden = self.service.hidden

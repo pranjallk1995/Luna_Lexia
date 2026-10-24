@@ -1,7 +1,9 @@
 """Read-only access to vault document files with cached page rendering."""
 
 import threading
+import zipfile
 from dataclasses import dataclass
+from io import BytesIO
 from pathlib import Path
 
 import pypdfium2 as pdfium
@@ -84,6 +86,19 @@ class DocumentFiles:
     def page(self, path: Path, index: int) -> Image.Image:
         """Return one cached, readable page render."""
         return self._page(str(path), path.stat().st_mtime_ns, index, self.config.page_preview_edge)
+
+    def zip(self, paths: "list[Path]") -> bytes:
+        """Archive original files under their display names, numbering repeats like ``a (2).pdf``."""
+        output, taken = BytesIO(), set()
+        with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+            for path in paths:
+                name = self.display_name(path.name)
+                stem, suffix, counter = Path(name).stem, Path(name).suffix, 2
+                while name.casefold() in taken:
+                    name, counter = f"{stem} ({counter}){suffix}", counter + 1
+                taken.add(name.casefold())
+                bundle.write(path, arcname=name)
+        return output.getvalue()
 
     @staticmethod
     def mime_type(path: Path) -> str:

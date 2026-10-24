@@ -325,3 +325,112 @@ class PublicURLRepository(Repository):
             (public_base_url,),
         )
         return cursor.rowcount
+
+
+class ImportRepository(Repository):
+    """The Drive connection, import jobs, and the outcome of every imported file."""
+
+    IMPORTED_OUTCOMES = ("imported", "duplicate")
+
+    def drive_connection(self) -> Row | None:
+        return self.fetch_one("SELECT email, encrypted_refresh_token, connected_at FROM drive_connection")
+
+    def save_drive_connection(self, email: str, encrypted_refresh_token: str) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO drive_connection (singleton, email, encrypted_refresh_token)
+                   VALUES (true, %s, %s)
+                   ON CONFLICT (singleton) DO UPDATE SET email = EXCLUDED.email,
+                       encrypted_refresh_token = EXCLUDED.encrypted_refresh_token, connected_at = now()""",
+                (email, encrypted_refresh_token),
+            )
+
+    def delete_drive_connection(self) -> None:
+        with self.database.connect() as connection:
+            connection.execute("DELETE FROM drive_connection")
+
+    def create_job(self, kind: str, source: str, request: dict[str, Any]) -> Row:
+        return self.fetch_one(
+            "INSERT INTO import_jobs (kind, source, request) VALUES (%s, %s, %s) RETURNING job_id",
+            (kind, source, Jsonb(request)),
+        )
+
+    def job_request(self, job_id: str) -> dict[str, Any] | None:
+        row = self.fetch_one("SELECT request FROM import_jobs WHERE job_id::text = %s", (job_id,))
+        return row["request"] if row else None
+
+    def unfinished_jobs(self) -> list[str]:
+        """Jobs a restart cut off, oldest first."""
+        rows = self.fetch_all(
+            """SELECT job_id FROM import_jobs WHERE status IN ('queued', 'listing', 'running')
+               ORDER BY created_at""",
+        )
+        return [str(row["job_id"]) for row in rows]
+
+    def item_recorded(self, job_id: str, position: int) -> bool:
+        return self.fetch_one(
+            "SELECT 1 AS found FROM import_items WHERE job_id::text = %s AND position = %s", (job_id, position)
+        ) is not None
+
+    def update_job(self, job_id: str, **fields: Any) -> None:
+        """Set job columns; ``started`` and ``finished`` stamp the matching time."""
+        assignments, params = [], []
+        for name, value in fields.items():
+            if name in ("started", "finished"):
+                assignments.append(f"{name}_at = now()")
+            else:
+                assignments.append(f"{name} = %s")
+                params.append(value)
+        with self.database.connect() as connection:
+            connection.execute(
+                f"UPDATE import_jobs SET {', '.join(assignments)} WHERE job_id = %s", (*params, job_id)
+            )
+
+    # Each job with how many files it has processed and a count per outcome.
+    _JOB_SELECT = """SELECT j.job_id, j.kind, j.source, j.status, j.total, j.error,
+            j.created_at, j.started_at, j.finished_at,
+            (SELECT count(*) FROM import_items i WHERE i.job_id = j.job_id) AS processed,
+            coalesce((SELECT jsonb_object_agg(outcome, n) FROM (
+                SELECT outcome, count(*) AS n FROM import_items i
+                WHERE i.job_id = j.job_id GROUP BY outcome) counts), '{}'::jsonb) AS outcomes
+        FROM import_jobs j"""
+
+    def job(self, job_id: str) -> Row | None:
+        return self.fetch_one(f"{self._JOB_SELECT} WHERE j.job_id::text = %s", (job_id,))
+
+    def jobs(self, limit: int) -> list[Row]:
+        return self.fetch_all(f"{self._JOB_SELECT} ORDER BY j.created_at DESC LIMIT %s", (limit,))
+
+    def items(self, job_id: str) -> list[Row]:
+        return self.fetch_all(
+            """SELECT source, source_id, name, path, outcome, document_name, error, created_at
+               FROM import_items WHERE job_id::text = %s ORDER BY item_id""",
+            (job_id,),
+        )
+
+    def record_item(self, job_id: str, item: dict[str, Any]) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO import_items (job_id, source, source_id, content_md5, name, path,
+                       outcome, document_name, error, position)
+                   VALUES (%(job_id)s, %(source)s, %(source_id)s, %(content_md5)s, %(name)s, %(path)s,
+                       %(outcome)s, %(document_name)s, %(error)s, %(position)s)
+                   ON CONFLICT (job_id, position) DO NOTHING""",
+                {
+                    "job_id": job_id,
+                    **{key: item.get(key) for key in (
+                        "source", "source_id", "content_md5", "name", "path", "outcome", "document_name", "error",
+                        "position",
+                    )},
+                },
+            )
+
+    def already_imported(self, source: str, source_id: str, content_md5: str | None) -> Row | None:
+        """The earlier import of this exact file version, if any."""
+        return self.fetch_one(
+            """SELECT name, document_name, created_at FROM import_items
+               WHERE source = %s AND source_id = %s AND outcome = ANY(%s)
+                 AND (%s::text IS NULL OR content_md5 IS NOT DISTINCT FROM %s)
+               ORDER BY item_id DESC LIMIT 1""",
+            (source, source_id, list(self.IMPORTED_OUTCOMES), content_md5, content_md5),
+        )

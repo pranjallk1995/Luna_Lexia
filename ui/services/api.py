@@ -109,6 +109,38 @@ class LunaLexiaAPI:
     def set_favorites(self, names: list[str], favorite: bool) -> None:
         self.request("POST", "/api/favorites", json={"names": names, "favorite": favorite})
 
+    # Google Drive and bulk imports
+
+    def drive_status(self) -> dict[str, Any]:
+        return self.request("GET", "/api/drive/status", timeout=10.0).json()
+
+    def drive_authorization_url(self) -> str:
+        return self.request("GET", "/api/drive/authorization-url", timeout=10.0).json()["url"]
+
+    def drive_disconnect(self) -> None:
+        self.request("POST", "/api/drive/disconnect")
+
+    def drive_folders(self, parent_id: str | None = None) -> list[dict[str, Any]]:
+        params = {"parent": parent_id} if parent_id else None
+        return self.request("GET", "/api/drive/folders", params=params, timeout=30.0).json()["folders"]
+
+    def import_drive_folder(self, folder: str, recursive: bool, doc_type: str | None) -> dict[str, Any]:
+        return self.request(
+            "POST",
+            "/api/imports/drive-folder",
+            json={"folder": folder, "recursive": recursive, "doc_type": doc_type},
+            timeout=60.0,
+        ).json()
+
+    def import_drive_files(self, files: list[dict[str, Any]]) -> dict[str, Any]:
+        return self.request("POST", "/api/imports/drive-files", json={"files": files}, timeout=60.0).json()
+
+    def import_jobs(self, limit: int = 5) -> list[dict[str, Any]]:
+        return self.request("GET", "/api/imports", params={"limit": limit}, timeout=10.0).json()["jobs"]
+
+    def import_job(self, job_id: str) -> dict[str, Any]:
+        return self.request("GET", f"/api/imports/{job_id}", timeout=10.0).json()
+
     # Hidden documents
 
     def hidden_documents(self) -> list[dict[str, Any]]:

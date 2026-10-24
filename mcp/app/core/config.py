@@ -1,10 +1,15 @@
 """Validated runtime configuration for the Luna Lexia backend."""
 
+import base64
 import os
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar
 from urllib.parse import urlparse
+
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 
 @dataclass(frozen=True)
@@ -13,6 +18,8 @@ class AppConfig:
 
     LOCAL_HOSTS: ClassVar[frozenset[str]] = frozenset({"localhost", "127.0.0.1", "::1"})
     DOCLING_DEVICES: ClassVar[frozenset[str]] = frozenset({"auto", "cuda", "cpu"})
+    # The UI's Streamlit secrets, mounted read-only; Drive import reuses its Google client.
+    GOOGLE_OAUTH_FILE: ClassVar[Path] = Path("/run/secrets/google_oauth.toml")
 
     document_dir: Path
     database_url: str
@@ -51,6 +58,14 @@ class AppConfig:
     context_tokens: int = 16_384
     # Where Docling runs its layout, table, and OCR models: auto uses a GPU when present.
     docling_device: str = "auto"
+    # Google Drive import: the UI's OAuth client and a key, derived from the API token,
+    # that encrypts the stored refresh token.
+    drive_client_id: str = ""
+    drive_client_secret: str = ""
+    drive_redirect_uri: str = ""
+    token_encryption_key: str = ""
+    # Files one Drive folder import or bulk upload may queue.
+    max_import_items: int = 500
     max_stored_text_chars: int = 200_000
     max_read_chars: int = 40_000
     max_tags: int = 32
@@ -86,6 +101,23 @@ class AppConfig:
     # Public HTTPS origin of this MCP server, used for its icon URLs ("" = embedded icons only).
     mcp_public_url: str = ""
 
+    @staticmethod
+    def google_client(path: Path) -> tuple[str, str]:
+        """Read the Google client ID and secret from the UI's ``[auth]`` secrets, if mounted."""
+        try:
+            auth = tomllib.loads(path.read_text()).get("auth", {})
+        except (OSError, tomllib.TOMLDecodeError):
+            return "", ""
+        return str(auth.get("client_id", "")).strip(), str(auth.get("client_secret", "")).strip()
+
+    @staticmethod
+    def derive_encryption_key(api_token: str) -> str:
+        """A Fernet key derived from the API token; rotating the token means reconnecting Drive."""
+        key = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b"lexia-drive-refresh-token").derive(
+            api_token.encode()
+        )
+        return base64.urlsafe_b64encode(key).decode()
+
     @classmethod
     def from_env(cls) -> "AppConfig":
         """Build and validate backend configuration from the environment."""
@@ -119,7 +151,12 @@ class AppConfig:
             )
             if not (parsed_public_url.scheme == "https" or local_http) or not parsed_public_url.netloc:
                 raise RuntimeError("MCP_PUBLIC_URL must be an HTTPS URL, or HTTP on localhost.")
+        drive_client_id, drive_client_secret = cls.google_client(cls.GOOGLE_OAUTH_FILE)
         return cls(
+            drive_client_id=drive_client_id,
+            drive_client_secret=drive_client_secret,
+            drive_redirect_uri=f"{mcp_public_url or 'http://localhost:18004'}/api/drive/callback",
+            token_encryption_key=cls.derive_encryption_key(api_token),
             mcp_public_url=mcp_public_url,
             document_dir=Path(os.getenv("DOCUMENT_DIR", "/data/documents")),
             database_url=database_url,

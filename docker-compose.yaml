@@ -41,6 +41,8 @@ services:
     volumes:
       - document_data:/data/documents
       - download_data:/data/downloads
+      # Drive import reuses the UI's Google OAuth client.
+      - ./ui/.streamlit/secrets.toml:/run/secrets/google_oauth.toml:ro
     develop:
       watch:
         - action: sync+restart

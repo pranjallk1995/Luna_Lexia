@@ -4,7 +4,9 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 import psycopg
+from langgraph.checkpoint.postgres import PostgresSaver
 from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS document_metadata (
@@ -71,6 +73,45 @@ CREATE OR REPLACE TRIGGER document_metadata_search_vector
     ON document_metadata
     FOR EACH ROW EXECUTE FUNCTION document_search_vector();
 
+-- Google Drive import: the connected account, background jobs, and each file's outcome.
+CREATE TABLE IF NOT EXISTS drive_connection (
+    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    email text NOT NULL,
+    encrypted_refresh_token text NOT NULL,
+    connected_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS import_jobs (
+    job_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    kind text NOT NULL,
+    source text NOT NULL,
+    status text NOT NULL DEFAULT 'queued',
+    total integer NOT NULL DEFAULT 0,
+    error text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    started_at timestamptz,
+    finished_at timestamptz
+);
+CREATE TABLE IF NOT EXISTS import_items (
+    item_id bigserial PRIMARY KEY,
+    job_id uuid NOT NULL REFERENCES import_jobs (job_id) ON DELETE CASCADE,
+    source text NOT NULL,
+    source_id text,
+    content_md5 text,
+    name text NOT NULL,
+    path text,
+    outcome text NOT NULL,
+    document_name text,
+    error text,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS import_items_job_idx ON import_items (job_id, item_id);
+CREATE INDEX IF NOT EXISTS import_items_source_idx ON import_items (source, source_id, outcome);
+-- What a job was asked to import, kept until it finishes so a restart can resume it;
+-- and each file's place in its job, so a resumed job never records a file twice.
+ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS request jsonb;
+ALTER TABLE import_items ADD COLUMN IF NOT EXISTS position integer;
+CREATE UNIQUE INDEX IF NOT EXISTS import_items_position_idx ON import_items (job_id, position);
+
 CREATE TABLE IF NOT EXISTS vault_config (
     singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
     public_base_url text NOT NULL,
@@ -95,3 +136,16 @@ class Database:
         """Create or upgrade the idempotent Luna Lexia database schema."""
         with psycopg.connect(self.database_url, autocommit=True) as connection:
             connection.execute(SCHEMA_SQL)
+
+    def checkpointer(self) -> PostgresSaver:
+        """LangGraph's checkpoint store in this database, with its tables created."""
+        pool = ConnectionPool(
+            self.database_url,
+            min_size=1,
+            max_size=2,
+            kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
+            open=True,
+        )
+        saver = PostgresSaver(pool)
+        saver.setup()
+        return saver

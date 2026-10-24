@@ -5,13 +5,15 @@ from mcp.server.fastmcp import FastMCP
 
 from app.core.config import AppConfig
 from app.data.database import Database
-from app.data.repositories import DocumentRepository, PublicURLRepository
+from app.data.repositories import DocumentRepository, ImportRepository, PublicURLRepository
+from app.integrations.drive import DriveOAuth
 from app.integrations.extraction import DocumentAnalyzer
 from app.integrations.ollama import OllamaChat
 from app.integrations.parsing import DoclingParser
 from app.integrations.remote import DocumentSourceResolver
 from app.services.application import LexiaService
 from app.services.documents import DocumentReader
+from app.services.imports import ImportGraph, ImportJobs, ImportService
 from app.transport.branding import ServerBranding
 from app.transport.http_routes import LexiaHTTPRoutes
 from app.transport.mcp_tools import LexiaMCPTools
@@ -37,17 +39,24 @@ class LunaLexiaApplication:
                 config.max_vision_pages,
             ),
         )
+        sources = DocumentSourceResolver(
+            self.service.visible.decoder, config.max_document_bytes, config.max_upload_redirects
+        )
+        imports = ImportRepository(self.database)
+        jobs = ImportJobs(imports, ImportGraph(self.service.visible, sources, imports), self.database.checkpointer())
+        self.service.imports = ImportService(
+            imports,
+            DriveOAuth(config.drive_client_id, config.drive_client_secret, config.drive_redirect_uri, config.api_token),
+            jobs,
+            config.token_encryption_key,
+            config.max_import_items,
+        )
+        jobs.resume_unfinished()
         self.branding = ServerBranding(config.mcp_public_url, name="Luna Lexia")
         self.mcp = FastMCP(
             "Luna Lexia", host=config.host, port=config.port, icons=self.branding.mcp_icons()
         )
-        LexiaMCPTools(
-            self.mcp,
-            self.service,
-            DocumentSourceResolver(
-                self.service.visible.decoder, config.max_document_bytes, config.max_upload_redirects
-            ),
-        )
+        LexiaMCPTools(self.mcp, self.service, sources)
         LexiaHTTPRoutes(self.mcp, self.service, self.branding, config.api_token)
 
     def run(self) -> None:

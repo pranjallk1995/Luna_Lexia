@@ -9,7 +9,7 @@
 
 ## Store, read, and search your financial documents with LLMs
 
-> **Work in progress:** Luna Lexia is a local-first and desktop-first document vault under active development.
+> **Work in progress:** Luna Lexia is a local-first and desktop-first document store under active development.
 
 Luna Lexia is the document counterpart of [Luna Visia](https://github.com/pranjallk1995/Luna_Visia):
 a private vault for payslips, Form 16s, bank statements, tax proofs, and other
@@ -225,6 +225,80 @@ for a 16,384-token context per request (`context_tokens` in
 Visia requests 8,192 tokens, so Ollama reloads the model when the two apps
 alternate; that costs a few seconds and needs no configuration.
 
+### Google Drive import
+
+Lexia can import whole Drive folders after a one-time, read-only Google sign-in.
+It needs no settings of its own: the backend reuses the UI's Google OAuth client
+from `ui/.streamlit/secrets.toml` (mounted read-only into `mcp`), builds the
+callback from `MCP_PUBLIC_URL`, and derives the key that encrypts the stored
+token from `LUNALEXIA_API_TOKEN`.
+1. In Google Cloud, enable the **Google Drive API** on the UI's OAuth client's
+   project, and set its consent screen to **In production** (in *Testing*, Google
+   expires the Drive token after 7 days).
+2. Add `<MCP_PUBLIC_URL>/api/drive/callback` (for example
+   `http://localhost:18004/api/drive/callback`) to the client's authorized redirect URIs.
+3. Open **Upload → Google Drive** in the UI and choose **Connect Google Drive**.
+
+Rotating `LUNALEXIA_API_TOKEN` disconnects Drive; connect again afterwards.
+
+The refresh token is stored encrypted in Postgres. Google Docs, Sheets, and
+Slides are exported as PDF. Files already imported at the same version are
+skipped, changed files are imported again, and password-protected PDFs are
+reported as `needs_password` so they can be retried with a password. One job
+imports at most 500 files (`max_import_items` in `mcp/app/core/config.py`).
+
+### How bulk imports run and resume
+
+Drive folder imports, Drive file imports, and bulk uploads all become
+background jobs, run one at a time because Docling and the model share the GPU.
+Two LangGraph graphs in `mcp/app/services/imports.py` do the work.
+
+**The job graph** (`lexia-import-job`) lists the files once, then imports one
+file per step:
+
+```
+plan ─┬─▶ import_next ⟲ (one file per step) ─▶ finish
+      └─▶ finish            (nothing to import, or the listing failed)
+```
+
+Its state is the job's `request`, the planned `items`, and a `cursor`. It runs
+with LangGraph's `PostgresSaver` checkpointer in Lexia's database, with the job
+ID as the thread ID and `durability="sync"`, so the state is committed after
+every step: after `plan`, the full file list; after each `import_next`, the
+advanced cursor.
+
+**The file graph** (`lexia-import`) handles one file inside `import_next`:
+
+```
+inspect ─┬─▶ record                    (unchanged since its last import, or not a PDF or image)
+         └─▶ download ─┬─▶ upload ─▶ record
+                       └─▶ record       (download failed)
+```
+
+`upload` is Lexia's normal upload, so every file goes through the
+Docling → classify → extract → validate pipeline, duplicate detection, and PDF
+unlocking. This graph is never checkpointed (its state holds the file's bytes);
+resuming happens a file at a time in the job graph.
+
+**Resuming after an interruption.** When the service starts, it queues every
+job still `queued`, `listing`, or `running`, oldest first, and for each one:
+
+1. **Interrupted mid-job:** the job thread has a checkpoint with a next step,
+   so the graph is invoked with no input and LangGraph continues from the last
+   saved step. The folder is not listed again; the file list and cursor come
+   from the checkpoint. Files before the cursor are not touched, and the file
+   that was in progress starts over.
+2. **Queued but never started:** no checkpoint exists, so the job starts from
+   the `request` stored with it in `import_jobs`. Base64 uploads survive too.
+
+Two safeguards cover a crash between finishing a file and saving its step.
+Each recorded file carries its `position` in the job, and `import_next` skips a
+position that is already recorded. If the upload itself had finished, Lexia's
+duplicate detection (by content hash) stops a second copy. When a job finishes,
+its checkpoints and stored request are deleted. A job only resumes
+automatically after a restart; to retry `failed` files, start the import again,
+and files already imported are skipped.
+
 ## MCP tools
 
 ### Browse and read
@@ -251,6 +325,16 @@ alternate; that costs a few seconds and needs no configuration.
 - `rename_document` / `rename_documents` - rename while keeping the immutable ID and public URL.
 - `set_favorite_documents`, `remove_document`, `backfill_documents`, `set_public_base_url`.
 
+### Bulk import and download
+
+- `google_drive_status` - whether Drive is configured and connected, and the connected account.
+- `list_drive_folders` - subfolders of My Drive or of a `parent_id`.
+- `import_drive_folder` - import a folder given as a link, ID, or exact name, optionally `recursive` and with a forced `doc_type`; returns a job.
+- `import_drive_files` - import specific Drive files, each with an optional `password`.
+- `upload_documents` - bulk upload; each item has exactly one of `drive_file_id`, `document_url`, `content_base64`, or `file`.
+- `get_import_job` / `list_import_jobs` - progress, counts per outcome, and each file's result.
+- `download_documents` - a 24-hour ZIP link for every document matching `names`, `doc_types`, `financial_year`, or `tags`.
+
 Hidden documents are never reachable through MCP tools.
 
 ## Web UI
@@ -261,7 +345,10 @@ Cards show the top of the first page, the document type, financial year, page
 count, and a `needs review` badge. The document dialog shows the pages beside
 the editable title, summary, and tags; review flags with a **Mark reviewed**
 button; an editable table of extracted fields; and re-extraction with a chosen
-type. The upload dialog accepts a PDF password and an optional document type.
+type. The upload dialog accepts many files at once with a PDF password and an
+optional document type, and its **Google Drive** tab connects Drive, imports a
+folder, follows recent jobs, and retries locked PDFs with a password. The
+gallery's ZIP button bundles exactly the documents shown, after any search.
 
 ## Project structure
 
@@ -269,8 +356,8 @@ Lexia follows the shared Luna layout (see the Visia README):
 
 - `mcp/app/core/` - configuration, `schemas.py` (document types, extraction schemas, business rules), and domain models.
 - `mcp/app/data/` - PostgreSQL schema (with a trigger-maintained search vector), repositories, and document storage.
-- `mcp/app/integrations/` - `parsing.py` (Docling), `ollama.py` (native Ollama model for Pydantic AI), `extraction.py` (classification and extraction agents), and `remote.py` (SSRF-guarded document sources).
-- `mcp/app/services/` - use cases (`application.py`), PDF handling and previews (`documents.py`), ZIP downloads, and upload links.
+- `mcp/app/integrations/` - `parsing.py` (Docling), `ollama.py` (native Ollama model for Pydantic AI), `extraction.py` (classification and extraction agents), and `remote.py` (SSRF-guarded document sources), and `drive.py` (Google Drive sign-in and client).
+- `mcp/app/services/` - use cases (`application.py`), PDF handling and previews (`documents.py`), ZIP downloads, upload links, and `imports.py` (the checkpointed import job graph, the per-file import graph, and the job queue).
 - `mcp/app/transport/` - MCP tools, HTTP routes, bearer authentication, and branding.
 - `ui/` - the Streamlit interface; `services/documents.py` renders pages with PDFium.
 

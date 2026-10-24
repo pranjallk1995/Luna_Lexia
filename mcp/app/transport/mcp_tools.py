@@ -111,6 +111,79 @@ RenameRequests = Annotated[
 DocTypes = list[DocTypeName] | None
 
 
+class DriveFileRequest(BaseModel):
+    """One Drive file to import, with its PDF password when it has one."""
+
+    file_id: str
+    password: str | None = None
+    doc_type: str | None = None
+    name: str | None = None
+
+
+class UploadItem(BaseModel):
+    """One document in a bulk upload: exactly one source, plus optional hints."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    name: str | None = None
+    file: FileReference | None = None
+    document_url: str | None = None
+    content_base64: str | None = None
+    drive_file_id: str | None = None
+    password: str | None = None
+    doc_type: str | None = None
+
+
+DriveFileRequests = Annotated[
+    list[DriveFileRequest],
+    WithJsonSchema(
+        {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "file_id": {"type": "string"},
+                    "password": {"type": "string"},
+                    "doc_type": {"type": "string"},
+                    "name": {"type": "string"},
+                },
+                "required": ["file_id"],
+            },
+            "description": "Drive files to import, each with an optional PDF password, doc_type, and name.",
+        }
+    ),
+]
+
+UploadItems = Annotated[
+    list[UploadItem],
+    WithJsonSchema(
+        {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "file": {
+                        "type": "object",
+                        "properties": {"download_url": {"type": "string"}, "file_id": {"type": "string"}},
+                        "required": ["download_url"],
+                    },
+                    "document_url": {"type": "string"},
+                    "content_base64": {"type": "string"},
+                    "drive_file_id": {"type": "string"},
+                    "password": {"type": "string"},
+                    "doc_type": {"type": "string"},
+                },
+            },
+            "description": (
+                "Documents to upload. Each has exactly one source: file (a chat attachment), "
+                "document_url, content_base64, or drive_file_id; plus optional name, password, doc_type."
+            ),
+        }
+    ),
+]
+
+
 async def offload(function: Callable[..., Result], *args: Any) -> Result:
     """Run slow, blocking work (model analysis, rendering, archives) off the event loop.
 
@@ -138,6 +211,8 @@ class LexiaMCPTools:
         self._register_library_tools()
         self._register_delivery_tools()
         self._register_mutation_tools()
+        if service.imports is not None:
+            self._register_import_tools()
 
     @staticmethod
     def content(result: PreviewResult) -> list:
@@ -340,6 +415,98 @@ class LexiaMCPTools:
             if delivery == "zip":
                 return await offload(downloads.create_zip, names)
             return await offload(self.preview, names)
+
+    def _register_import_tools(self) -> None:
+        server, imports, downloads = self.server, self.service.imports, self.service.downloads
+
+        @server.tool()
+        def google_drive_status() -> dict[str, Any]:
+            """Show whether Google Drive is connected, and the sign-in link when it is not.
+
+            Give the user authorization_url to open in a browser; Lexia only ever
+            asks for read-only access to their Drive.
+            """
+            status = imports.drive_status()
+            if status["configured"] and not status["connected"]:
+                status["authorization_url"] = imports.authorization_url()
+            return status
+
+        @server.tool()
+        async def list_drive_folders(parent_folder_id: str | None = None) -> dict[str, Any]:
+            """List the folders in My Drive's root, or inside parent_folder_id."""
+            return {"folders": await offload(imports.drive_folders, parent_folder_id)}
+
+        @server.tool()
+        async def import_drive_folder(
+            folder: str, recursive: bool = True, doc_type: DocTypeName | None = None
+        ) -> dict[str, Any]:
+            """Import every PDF and image in a Google Drive folder into Lexia, as a background job.
+
+            folder is a folder link, ID, or exact name (if several folders share
+            the name, the error lists their IDs to choose from). Subfolders are
+            included unless recursive=false; Google Docs, Sheets, and Slides are
+            imported as PDFs. Files already imported unchanged are skipped, so
+            re-running a folder only adds what is new. Returns a job; follow its
+            progress with get_import_job. Each document takes about 20-40 seconds.
+            """
+            return await offload(imports.import_drive_folder, folder, recursive, doc_type)
+
+        @server.tool()
+        async def import_drive_files(files: DriveFileRequests) -> dict[str, Any]:
+            """Import specific Google Drive files by ID, as a background job.
+
+            Use it to retry files a folder import reported as needs_password, with
+            their passwords, or to import a few files without a whole folder.
+            """
+            return await offload(imports.import_drive_files, [file.model_dump() for file in files])
+
+        @server.tool()
+        async def upload_documents(items: UploadItems) -> dict[str, Any]:
+            """Upload many documents at once, as a background job.
+
+            Each item has exactly one source: file (a chat attachment),
+            document_url, content_base64, or drive_file_id, plus an optional name,
+            password, and doc_type. Each file is classified and extracted like
+            upload_document; follow the job with get_import_job.
+            """
+            payload = [
+                {**item.model_dump(exclude={"file"}), "file": item.file.model_dump() if item.file else None}
+                for item in items
+            ]
+            return await offload(imports.upload_batch, payload)
+
+        @server.tool()
+        async def get_import_job(job_id: str, include_files: bool = True) -> dict[str, Any]:
+            """Report an import job's progress and each file's outcome.
+
+            status is queued, listing, running, done, failed, or interrupted (by a
+            restart). outcomes counts imported, duplicate (already in Lexia),
+            skipped (imported before, unchanged), needs_password, unsupported,
+            and failed files; each file lists its name, Drive path, outcome, the
+            Lexia document_name it became, and any error.
+            """
+            return await offload(imports.job, job_id, include_files)
+
+        @server.tool()
+        async def list_import_jobs(limit: int = 10) -> dict[str, Any]:
+            """List recent import jobs, newest first, with their progress."""
+            return {"jobs": await offload(imports.jobs_list, limit)}
+
+        @server.tool()
+        async def download_documents(
+            names: list[str] | None = None,
+            doc_types: DocTypes = None,
+            financial_year: str | None = None,
+            tags: list[str] | None = None,
+        ) -> dict[str, Any]:
+            """Download many visible documents as one ZIP: by names, or every document of the
+            given doc_types, financial_year, and tags (all must match).
+
+            Returns a download_url valid for 24 hours (at most 200 documents, 2 GiB);
+            give it to the user exactly as returned.
+            """
+            MetadataRules.require_lowercase_tags(tags, "tags")
+            return await offload(downloads.create_zip_for, names, doc_types, financial_year, tags)
 
     def _register_mutation_tools(self) -> None:
         server, visible, sources, uploads = (
