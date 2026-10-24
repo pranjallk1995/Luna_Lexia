@@ -278,6 +278,34 @@ class CareerAndPersonalTypeTests(unittest.TestCase):
             self.assertIn(key, DOCUMENT_TYPES)
 
 
+class DoclingFallbackTests(unittest.TestCase):
+    """Pages Docling returns empty fall back to the PDF text layer."""
+
+    def parser(self, pages):
+        from app.integrations.parsing import DoclingParser
+
+        parser = DoclingParser(DocumentReader(), 200_000, "cpu")
+        parser._docling_pages = lambda data, file_format: pages
+        return parser
+
+    def test_empty_docling_pages_use_the_text_layer(self):
+        from fakes import minimal_pdf
+
+        data = minimal_pdf(["ACME PAYSLIP", "Net Pay 80,000"], pages=2)
+        content = self.parser(["## ACME PAYSLIP\nNet Pay 80,000", ""]).parse(data, "PDF")
+        self.assertEqual(content.page_texts[0], "## ACME PAYSLIP\nNet Pay 80,000")
+        self.assertIn("Net Pay 80,000", content.page_texts[1])
+        self.assertEqual(content.parser, "docling")
+
+    def test_docling_failure_falls_back_to_pdfium(self):
+        from fakes import minimal_pdf
+
+        parser = self.parser([])
+        parser._docling_pages = lambda data, file_format: (_ for _ in ()).throw(RuntimeError("boom"))
+        content = parser.parse(minimal_pdf(["ACME PAYSLIP"]), "PDF")
+        self.assertEqual((content.parser, content.page_texts[0]), ("pdfium", "ACME PAYSLIP"))
+
+
 class OllamaAdapterTests(unittest.TestCase):
     def test_strict_format_requires_every_field_and_drops_noise(self):
         schema = strict_format(DOCUMENT_TYPES["payslip"].schema.model_json_schema())

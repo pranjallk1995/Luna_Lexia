@@ -12,6 +12,7 @@ class AppConfig:
     """Immutable backend settings loaded from environment variables."""
 
     LOCAL_HOSTS: ClassVar[frozenset[str]] = frozenset({"localhost", "127.0.0.1", "::1"})
+    DOCLING_DEVICES: ClassVar[frozenset[str]] = frozenset({"auto", "cuda", "cpu"})
 
     document_dir: Path
     database_url: str
@@ -48,6 +49,8 @@ class AppConfig:
     max_prompt_chars: int = 24_000
     # Ollama context window per request; must hold the prompt, schema, and reply.
     context_tokens: int = 16_384
+    # Where Docling runs its layout, table, and OCR models: auto uses a GPU when present.
+    docling_device: str = "auto"
     max_stored_text_chars: int = 200_000
     max_read_chars: int = 40_000
     max_tags: int = 32
@@ -104,6 +107,9 @@ class AppConfig:
         api_token = os.getenv("LUNALEXIA_API_TOKEN", "").strip()
         if len(api_token) < 32:
             raise RuntimeError("LUNALEXIA_API_TOKEN must contain at least 32 characters.")
+        docling_device = os.getenv("DOCLING_DEVICE", "auto").strip().lower()
+        if docling_device not in cls.DOCLING_DEVICES:
+            raise RuntimeError(f"DOCLING_DEVICE must be one of: {', '.join(sorted(cls.DOCLING_DEVICES))}.")
         mcp_public_url = os.getenv("MCP_PUBLIC_URL", "").strip().rstrip("/")
         if mcp_public_url:
             parsed_public_url = urlparse(mcp_public_url)
@@ -121,4 +127,5 @@ class AppConfig:
             document_model=document_model,
             public_base_url=public_base_url,
             api_token=api_token,
+            docling_device=docling_device,
         )

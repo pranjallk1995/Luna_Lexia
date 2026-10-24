@@ -22,11 +22,15 @@ services:
     build: ./mcp
     working_dir: /workspace/mcp
     restart: unless-stopped
+    # Docling's layout, table, and OCR models run on the GPU (DOCLING_DEVICE=auto picks
+    # it when present). Remove this line to run on CPU on a machine without one.
+    gpus: all
     environment:
       DATABASE_URL: postgresql://lunalexia:${POSTGRES_PASSWORD:-lunalexia-dev}@luna-lexia-db:5432/lunalexia
       DOCUMENT_DIR: /data/documents
       OLLAMA_URL: ${OLLAMA_URL:-http://luna-sentia-ollama:11434}
       DOCUMENT_MODEL: ${DOCUMENT_MODEL:-qwen2.5vl:7b}
+      DOCLING_DEVICE: ${DOCLING_DEVICE:-auto}
       LUNALEXIA_PUBLIC_BASE_URL: ${LUNALEXIA_PUBLIC_BASE_URL:-}
       MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-http://localhost:18004}
       LUNALEXIA_API_TOKEN: ${LUNALEXIA_API_TOKEN:?Set LUNALEXIA_API_TOKEN to a private random value of at least 32 characters}

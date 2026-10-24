@@ -143,6 +143,7 @@ Create a private `.env` from `.env.example`:
 ```dotenv
 POSTGRES_PASSWORD=replace-with-a-private-database-password
 DOCUMENT_MODEL=qwen2.5vl:7b
+DOCLING_DEVICE=auto
 LUNALEXIA_PUBLIC_BASE_URL=
 LUNALEXIA_API_TOKEN=replace-with-a-random-value-of-at-least-32-characters
 LUNALEXIA_ALLOWED_EMAILS=you@example.com
@@ -173,8 +174,9 @@ Start Luna Lexia:
 docker compose up --build
 ```
 
-The first build downloads CPU-only PyTorch and Docling's layout, table, and OCR
-models into the image (about 2.7 GB), so uploads never wait on downloads.
+The first build downloads PyTorch for CUDA 13.0 and Docling's layout, table, and
+OCR models into the image (about 11.6 GB), so uploads never wait on downloads and
+parsing works without internet access.
 
 - UI: <http://127.0.0.1:18505>
 - Service health: <http://127.0.0.1:18004/health>
@@ -187,10 +189,21 @@ models into the image (about 2.7 GB), so uploads never wait on downloads.
 | Password | `lunalexia-dev` |
 | Database host inside Docker | `luna-lexia-db` |
 
-Analysis takes about 10–40 seconds per document on a GPU-backed Sentia: Docling
-runs on CPU, then two model calls. Inspect the database with
+Analysis takes about 10–40 seconds per document, almost all of it the two model
+calls to Sentia; Docling parses a page in well under a second on the GPU. Inspect
+the database with
 [Adminer in Luna Sentia](https://github.com/pranjallk1995/Luna_Sentia#database-ui)
 using server `luna-lexia-db`.
+
+### GPU parsing
+
+The MCP service is given the GPU (`gpus: all`), and Docling runs its layout,
+table, and OCR models there. `DOCLING_DEVICE` selects the device: `auto` (the
+default) uses a CUDA GPU when one is visible and the CPU otherwise, while `cuda`
+or `cpu` force one. On an RTX 5070, a scanned page takes about 0.4 s instead of
+2 s on the CPU and a text PDF about 15 times less, using under 1 GB of GPU
+memory beside Ollama's model. On a machine without an NVIDIA GPU, remove
+`gpus: all` from the `mcp` service; parsing then runs on the CPU.
 
 ### Model and context
 

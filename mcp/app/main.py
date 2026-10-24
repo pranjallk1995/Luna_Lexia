@@ -30,7 +30,7 @@ class LunaLexiaApplication:
             config,
             DocumentRepository(self.database),
             PublicURLRepository(self.database),
-            DoclingParser(reader, config.max_stored_text_chars),
+            DoclingParser(reader, config.max_stored_text_chars, config.docling_device),
             DocumentAnalyzer(
                 OllamaChat(config.ollama_url, config.document_model, config.context_tokens),
                 MetadataRules(config.max_tags, config.search_stop_words),
