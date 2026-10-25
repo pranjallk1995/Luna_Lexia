@@ -183,6 +183,13 @@ class DriveConnectionTests(ImportTestCase):
         with self.assertRaisesRegex(ValueError, "not connected"):
             self.imports.import_drive_folder("Professional")
 
+    def test_callback_behind_an_https_proxy_keeps_the_public_https_url(self):
+        oauth = DriveOAuth("client", "secret", "https://lexia-mcp.example.test/api/drive/callback", "x" * 32)
+        self.assertEqual(
+            oauth.callback_response("http://lexia-mcp.example.test/api/drive/callback?code=abc&state=s"),
+            "https://lexia-mcp.example.test/api/drive/callback?code=abc&state=s",
+        )
+
     def test_authorization_url_is_read_only_and_signed(self):
         url = self.imports.authorization_url()
         self.assertIn("drive.readonly", url)

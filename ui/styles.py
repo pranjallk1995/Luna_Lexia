@@ -188,6 +188,10 @@ class LunaStyle:
             .lv-card-facts { overflow:hidden; }
             .lv-card-facts:has(+ .lv-card-review) { margin-bottom:.4rem; }
             .lv-card-review { margin-bottom:1.5rem; font-size:.7rem; line-height:1.1rem; }
+            /* The theme's primary color is near-white, so a switched-on toggle would be a white
+               knob on a white track; give its "on" track the indigo accent. */
+            [data-testid="stCheckbox"] label:has(> input:checked) > div:first-child { background:#6366f1!important; border-color:#6366f1!important; }
+            [data-testid="stCheckbox"] label:has(> input:checked) > div:first-child > div { background:#ffffff!important; }
             .lv-review-flag { display:inline-block; padding:.05rem .45rem; border:1px solid rgba(251,191,36,.3); border-radius:999px; color:#fcd34d; background:rgba(217,119,6,.18); }
             div[data-testid="stElementContainer"]:has(.lv-preview-details) { display:none!important; }
             div[data-testid="stVerticalBlockBorderWrapper"]:has(.lv-preview-details),

@@ -77,6 +77,9 @@ class DriveOAuth:
         self.client_secret = client_secret
         self.redirect_uri = redirect_uri
         self.signer = URLSafeTimedSerializer(state_secret, salt="lexia-drive")
+        # The client is shared with the UI's sign-in, so Google may return its openid,
+        # email, and profile scopes too; oauthlib would otherwise reject the extra scopes.
+        os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
         if urlparse(redirect_uri).hostname in {"localhost", "127.0.0.1"}:
             # oauthlib refuses plain-HTTP callbacks unless told this is local development.
             os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
@@ -105,9 +108,14 @@ class DriveOAuth:
             raise ValueError("Google Drive is not configured; set DRIVE_CLIENT_ID and DRIVE_CLIENT_SECRET.")
         state = self.signer.dumps({"purpose": "drive"})
         url, _ = self.flow(state).authorization_url(
-            access_type="offline", include_granted_scopes="true", prompt="consent", state=state
+            access_type="offline", prompt="consent", state=state
         )
         return url
+
+    def callback_response(self, callback_url: str) -> str:
+        """The callback as Google sent it: behind a TLS-terminating proxy the request
+        arrives as plain HTTP, which oauthlib rejects, so keep only its query."""
+        return f"{self.redirect_uri}?{urlparse(callback_url).query}"
 
     def exchange(self, callback_url: str, state: str) -> tuple[str, str]:
         """Finish the sign-in; return the account email and its refresh token."""
@@ -116,7 +124,7 @@ class DriveOAuth:
         except BadSignature as error:
             raise PermissionError("This Google Drive sign-in link expired or was not started by Lexia.") from error
         flow = self.flow(state)
-        flow.fetch_token(authorization_response=callback_url)
+        flow.fetch_token(authorization_response=self.callback_response(callback_url))
         credentials = flow.credentials
         if not credentials.refresh_token:
             raise ValueError("Google did not return a refresh token; remove Lexia's access and connect again.")
