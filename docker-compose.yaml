@@ -56,6 +56,8 @@ services:
     working_dir: /workspace/ui
     restart: unless-stopped
     environment:
+      LUNA_SSO_URL: ${LUNA_SSO_URL:?Set LUNA_SSO_URL to Luna Sentia's public sign-on address}
+      LUNA_SSO_INTERNAL_URL: ${LUNA_SSO_INTERNAL_URL:-http://luna-sentia-auth:8000}
       DOCUMENT_DIR: /data/documents
       LUNALEXIA_API_URL: http://luna-lexia-mcp:8000
       LUNALEXIA_API_TOKEN: ${LUNALEXIA_API_TOKEN:?Set LUNALEXIA_API_TOKEN to a private random value of at least 32 characters}
@@ -64,7 +66,6 @@ services:
       - "127.0.0.1:18505:8501"
     volumes:
       - document_data:/data/documents:ro
-      - ./ui/.streamlit/secrets.toml:/workspace/ui/.streamlit/secrets.toml:ro
     develop:
       watch:
         - action: sync

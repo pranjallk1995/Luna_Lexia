@@ -173,16 +173,23 @@ peer apps such as Fiora. Generate it with `openssl rand -hex 32`.
 with the `set_public_base_url` tool) to the public HTTPS origin of the MCP server
 to enable them.
 
-### Google OAuth settings
+### Sign-in
 
-1. Use a Google OAuth 2.0 **Web application** client (the one Visia uses works).
-2. Add `http://localhost:18505/oauth2callback` (and your hosted callback, if any)
-   as an authorized redirect URI.
-3. Copy `ui/.streamlit/secrets.example.toml` to `ui/.streamlit/secrets.toml` and
-   set `redirect_uri`, `cookie_secret`, `client_id`, and `client_secret`.
+Lexia signs people in through Luna Sentia's single sign-on: one Google sign-in at
+Sentia opens every Luna app, and **Sign out** in any app signs out of all of them.
+Lexia's UI needs no Google client of its own; `ui/.streamlit/secrets.toml` now
+only supplies the Google client the backend reuses for [Google Drive import](#google-drive-import).
+Set in `.env`:
 
-Create `secrets.toml` before starting the UI: Docker would otherwise create a
-directory in its place.
+- `LUNA_SSO_URL`: Sentia's public sign-on address (`SENTIA_AUTH_PUBLIC_URL` in
+  Sentia's `.env`), for example `https://auth.lunaapps.fyi`.
+- `LUNA_SSO_INTERNAL_URL`: `http://luna-sentia-auth:8000`, where Lexia checks
+  sessions over `luna_sentia_network`.
+- `LUNALEXIA_ALLOWED_EMAILS`: the accounts allowed into Lexia, checked
+  after Sentia confirms who is signed in.
+
+Sentia's auth service must be healthy before Lexia can sign anyone in; see
+[Single sign-on](https://github.com/pranjallk1995/Luna_Sentia#single-sign-on) for its setup.
 
 Start Luna Lexia:
 
@@ -299,7 +306,7 @@ Hidden documents are never reachable through MCP tools.
 ## Web UI
 
 The Streamlit UI mirrors Visia: grid and list galleries with search,
-favorites, OAuth-gated hidden documents, downloads, renames, and deletion.
+favorites, sign-in-gated hidden documents, downloads, renames, and deletion.
 Cards show the top of the first page, the document type, financial year, page
 count, and a `needs review` badge. The document dialog shows the pages beside
 the editable title, summary, and tags; review flags with a **Mark reviewed**
