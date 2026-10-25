@@ -4,7 +4,7 @@
 ![Docker Compose v2](https://img.shields.io/badge/Docker_Compose-v2-2496ED?logo=docker&logoColor=white)
 ![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![Luna Sentia required](https://img.shields.io/badge/Luna_Sentia-required-111111?logo=ollama&logoColor=white)
-![PostgreSQL included](https://img.shields.io/badge/PostgreSQL-included-4169E1?logo=postgresql&logoColor=white)
+![PostgreSQL in Luna Sentia](https://img.shields.io/badge/PostgreSQL-in_Luna_Sentia-4169E1?logo=postgresql&logoColor=white)
 ![Status: usable](https://img.shields.io/badge/Status-usable-2EA043)
 
 ## Store, read, and search your financial documents with LLMs
@@ -24,7 +24,7 @@ needs to prepare tax-filing supporting documents and track finances, in the
 same way Luna Vita uses Luna Visia. MCP tools let any assistant list, search,
 read, download, upload, rename, correct, and delete documents.
 
-> **Requires Luna Sentia:** Ollama and its models run in Luna Sentia. Start Sentia first: it serves the model and creates the shared `luna_sentia_network` that Lexia joins. Lexia uses `qwen2.5vl:7b` by default, the same model as Visia, so nothing extra is downloaded.
+> **Requires Luna Sentia, running and healthy:** Luna Lexia keeps its data in Luna Sentia's PostgreSQL (`luna-sentia-db`) and joins Sentia's `luna_sentia_network`; it has no database of its own. Start [Luna Sentia](https://github.com/pranjallk1995/Luna_Sentia) first and wait until its `postgres` and `ollama` services report healthy, as described under [Start](#start). Sentia also serves the model: Lexia uses `qwen2.5vl:7b` by default, the same model as Visia, so nothing extra is downloaded.
 
 ## How a document is processed
 
@@ -136,16 +136,27 @@ rather than the filename when linking a Fiora record to its supporting document.
 
 ## Start
 
-Start Luna Sentia first, or start everything with `../luna.sh start` (Lexia is
-part of the default app list):
+Start [Luna Sentia](https://github.com/pranjallk1995/Luna_Sentia) first and wait until it is healthy. Sentia runs
+the PostgreSQL server that holds Lexia's `lunalexia` database, serves the models,
+and creates the shared `luna_sentia_network` every Luna app joins. Lexia has no
+database of its own: started before Sentia is healthy, it cannot reach its
+data and keeps restarting until it can.
 
 ```sh
-cd ../Luna_Sentia && docker compose up -d
+cd ../Luna_Sentia
+docker compose up -d --wait postgres ollama adminer
+docker compose run --rm postgres-init   # creates the lunalexia role and database
+docker compose ps                       # postgres and ollama must show (healthy)
 ```
+
+See [Is Sentia healthy?](https://github.com/pranjallk1995/Luna_Sentia#is-sentia-healthy) if they do not.
+Or start Sentia and every app in order with `../luna.sh start` (Lexia is part
+of the default app list).
 
 Create a private `.env` from `.env.example`:
 
 ```dotenv
+# Must equal LUNALEXIA_DB_PASSWORD in Luna_Sentia/.env
 POSTGRES_PASSWORD=replace-with-a-private-database-password
 DOCUMENT_MODEL=qwen2.5vl:7b
 DOCLING_DEVICE=auto
@@ -192,13 +203,13 @@ parsing works without internet access.
 | Database | `lunalexia` |
 | Username | `lunalexia` |
 | Password | `lunalexia-dev` |
-| Database host inside Docker | `luna-lexia-db` |
+| Database host inside Docker | `luna-sentia-db` |
 
 Analysis takes about 10–40 seconds per document, almost all of it the two model
 calls to Sentia; Docling parses a page in well under a second on the GPU. Inspect
 the database with
 [Adminer in Luna Sentia](https://github.com/pranjallk1995/Luna_Sentia#database-ui)
-using server `luna-lexia-db`.
+using server `luna-sentia-db`.
 
 ### GPU parsing
 

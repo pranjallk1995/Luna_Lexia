@@ -1,23 +1,4 @@
 services:
-  postgres:
-    image: postgres:17-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: lunalexia
-      POSTGRES_USER: lunalexia
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lunalexia-dev}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      sentia_network:
-        aliases:
-          - luna-lexia-db
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U lunalexia -d lunalexia"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   mcp:
     build: ./mcp
     working_dir: /workspace/mcp
@@ -26,7 +7,7 @@ services:
     # it when present). Remove this line to run on CPU on a machine without one.
     gpus: all
     environment:
-      DATABASE_URL: postgresql://lunalexia:${POSTGRES_PASSWORD:-lunalexia-dev}@luna-lexia-db:5432/lunalexia
+      DATABASE_URL: postgresql://lunalexia:${POSTGRES_PASSWORD:-lunalexia-dev}@luna-sentia-db:5432/lunalexia
       DOCUMENT_DIR: /data/documents
       OLLAMA_URL: ${OLLAMA_URL:-http://luna-sentia-ollama:11434}
       DOCUMENT_MODEL: ${DOCUMENT_MODEL:-qwen2.5vl:7b}
@@ -63,9 +44,6 @@ services:
       sentia_network:
         aliases:
           - luna-lexia-mcp
-    depends_on:
-      postgres:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
       interval: 10s
@@ -112,8 +90,6 @@ services:
         condition: service_healthy
 
 volumes:
-  postgres_data:
-    name: luna_lexia_postgres_data
   document_data:
     name: luna_lexia_document_data
   download_data:
