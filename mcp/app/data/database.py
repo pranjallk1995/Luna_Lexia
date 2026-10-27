@@ -136,3 +136,41 @@ class Database:
         """Create or upgrade the idempotent Luna Lexia database schema."""
         with psycopg.connect(self.database_url, autocommit=True) as connection:
             connection.execute(SCHEMA_SQL)
+
+    def initialize_semantic_schema(self, dimensions: int) -> None:
+        """Create the chunk table for semantic search, sized for the embedding model.
+
+        Embeddings are derived data: when the model's dimensions change, the table is
+        rebuilt empty and the background indexer embeds every document again.
+        """
+        with psycopg.connect(self.database_url, autocommit=True) as connection:
+            installed = connection.execute("SELECT 1 FROM pg_extension WHERE extname = 'vector'").fetchone()
+            if installed is None:
+                raise RuntimeError(
+                    "The pgvector extension is missing; run Luna Sentia's postgres-init to install it."
+                )
+            current = connection.execute(
+                """SELECT atttypmod FROM pg_attribute
+                   WHERE attrelid = to_regclass('document_chunks') AND attname = 'embedding'"""
+            ).fetchone()
+            if current is not None and current[0] != dimensions:
+                connection.execute("DROP TABLE document_chunks")
+            connection.execute(
+                f"""
+CREATE TABLE IF NOT EXISTS document_chunks (
+    chunk_id bigserial PRIMARY KEY,
+    document_id uuid NOT NULL REFERENCES document_metadata (document_id) ON DELETE CASCADE,
+    chunk_index integer NOT NULL,
+    page integer NOT NULL,
+    content text NOT NULL,
+    source_md5 char(32) NOT NULL,
+    embedding_model text NOT NULL,
+    embedding vector({int(dimensions)}) NOT NULL,
+    search_vector tsvector GENERATED ALWAYS AS (to_tsvector('english', content)) STORED,
+    UNIQUE (document_id, chunk_index)
+);
+CREATE INDEX IF NOT EXISTS document_chunks_embedding_idx
+    ON document_chunks USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS document_chunks_search_idx ON document_chunks USING gin (search_vector);
+"""
+            )

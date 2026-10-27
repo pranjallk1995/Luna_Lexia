@@ -56,6 +56,11 @@ class AppConfig:
     max_prompt_chars: int = 24_000
     # Ollama context window per request; must hold the prompt, schema, and reply.
     context_tokens: int = 16_384
+    # Semantic search: the Sentia embedding model, its vector size, and passage sizes.
+    embedding_model: str = "qwen3-embedding:0.6b"
+    embedding_dimensions: int = 1024
+    chunk_chars: int = 1200
+    chunk_overlap_chars: int = 200
     # Where Docling runs its layout, table, and OCR models: auto uses a GPU when present.
     docling_device: str = "auto"
     # Google Drive import: the UI's OAuth client and a key, derived from the API token,
@@ -162,6 +167,8 @@ class AppConfig:
             database_url=database_url,
             ollama_url=ollama_url,
             document_model=document_model,
+            embedding_model=os.getenv("EMBEDDING_MODEL", "qwen3-embedding:0.6b").strip(),
+            embedding_dimensions=int(os.getenv("EMBEDDING_DIMENSIONS", "1024")),
             public_base_url=public_base_url,
             api_token=api_token,
             docling_device=docling_device,

@@ -945,6 +945,8 @@ class LexiaService:
         self.max_read_chars = max_read_chars
         # Google Drive and bulk imports; set by the composition root, absent in plain setups.
         self.imports: Any = None
+        # Set by the composition root: the SemanticIndex for semantic search and answers.
+        self.semantic: Any = None
 
     @staticmethod
     def document_types() -> list[dict[str, Any]]:

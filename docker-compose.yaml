@@ -11,6 +11,8 @@ services:
       DOCUMENT_DIR: /data/documents
       OLLAMA_URL: ${OLLAMA_URL:-http://luna-sentia-ollama:11434}
       DOCUMENT_MODEL: ${DOCUMENT_MODEL:-qwen2.5vl:7b}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-qwen3-embedding:0.6b}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1024}
       DOCLING_DEVICE: ${DOCLING_DEVICE:-auto}
       LUNALEXIA_PUBLIC_BASE_URL: ${LUNALEXIA_PUBLIC_BASE_URL:-}
       MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-http://localhost:18004}

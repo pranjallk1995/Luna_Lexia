@@ -267,6 +267,49 @@ was in progress; if that file's upload had already finished, duplicate detection
 (by content hash) stops a second copy. When a job finishes, its stored request is
 cleared. To retry `failed` files, start the import again; imported files are skipped.
 
+## Semantic search and answers (RAG)
+
+Lexia keeps an embedding index of every document in Luna Sentia's PostgreSQL
+(pgvector), so assistants can retrieve the passages that answer a question
+rather than whole documents.
+
+```text
+document -> passages -> embeddings (Sentia's EMBEDDING_MODEL) -> document_chunks (pgvector, HNSW)
+question -> embedding + full-text query -> cosine similarity and text rank -> fused ranking -> passages
+                                                                      ask_documents -> local model -> cited answer
+```
+
+- **Passages.** Each document gets one *overview* passage (title, type, issuer,
+  financial year, summary, and every extracted field) plus each page's parsed
+  text in windows of about 1,200 characters overlapping by 200, cut at line
+  breaks, with table padding removed. Each passage is embedded with a line
+  naming its document and page, so it keeps its context.
+- **Embeddings.** `EMBEDDING_MODEL` (`qwen3-embedding:0.6b`, 1,024 dimensions,
+  pulled by Sentia) turns passages into unit-length vectors. Questions are
+  embedded with a one-line retrieval instruction, as the model expects.
+- **Indexing.** A background worker embeds any document whose title, summary,
+  extracted details, or text changed, within about 10 seconds of an upload or
+  edit; uploads never wait for it. Changing `EMBEDDING_DIMENSIONS` rebuilds the
+  index.
+- **Similarity.** Passages are compared by **cosine similarity**, computed as
+  `1 - (embedding <=> query)` with pgvector's cosine distance and served by an
+  **HNSW** approximate-nearest-neighbour index (`vector_cosine_ops`), with
+  iterative scans so type and year filters still return enough passages.
+- **Hybrid ranking.** The default `hybrid` mode also ranks passages with
+  PostgreSQL full-text search (`ts_rank_cd`, matching any word of the
+  question), then fuses both lists with **Reciprocal Rank Fusion**: a passage
+  scores `1 / (60 + rank)` in each list it appears in, and the sums decide the
+  order. Meaning-based matching finds "tax deducted" in a Form 16; the text side
+  keeps exact identifiers such as a PAN or policy number.
+- **Answers.** `ask_documents` gives the best passages, numbered, to the local
+  `DOCUMENT_MODEL` and asks for an answer that cites them as `[n]`, names the
+  document and period of each figure, and says when the answer is not there.
+  `cited` reports whether it did. A 7B model can still misread tables, so an
+  assistant that can read passages itself should prefer
+  `semantic_search_documents`.
+- **Privacy.** Hidden documents are never searched, and everything, embedding
+  and answering included, runs locally in Luna Sentia.
+
 ## MCP tools
 
 ### Browse and read
@@ -292,6 +335,13 @@ cleared. To retry `failed` files, start the import again; imported files are ski
 - `update_document_metadata` / `update_documents_metadata` - edit titles, summaries, and tags; correct `extracted` fields (validated against the type's schema, with key facts and review flags recomputed); `mark_reviewed=true` clears review flags once a person confirms the details.
 - `rename_document` / `rename_documents` - rename while keeping the immutable ID and public URL.
 - `set_favorite_documents`, `remove_document`, `backfill_documents`, `set_public_base_url`.
+
+### Semantic search and answers
+
+- `semantic_search_documents` - the passages that best answer a question, with document, title, page, cosine `similarity`, fused `score`, and which rankings matched; `mode` is `hybrid` (default), `semantic`, or `keyword`; filter by `doc_types` and `financial_year`.
+- `ask_documents` - an answer from the local model using only the best passages, citing them as `[n]`, with the numbered `sources`.
+- `get_semantic_index_status` - embedding model, documents indexed and pending, passage count, the similarity measure, and the last embedding error.
+- `reindex_semantic_search` - embed some or all documents again (not needed after uploads or edits).
 
 ### Bulk import
 
@@ -321,8 +371,8 @@ Lexia follows the shared Luna layout (see the Visia README):
 
 - `mcp/app/core/` - configuration, `schemas.py` (document types, extraction schemas, business rules), and domain models.
 - `mcp/app/data/` - PostgreSQL schema (with a trigger-maintained search vector), repositories, and document storage.
-- `mcp/app/integrations/` - `parsing.py` (Docling), `ollama.py` (native Ollama model for Pydantic AI), `extraction.py` (classification and extraction agents), and `remote.py` (SSRF-guarded document sources), and `drive.py` (Google Drive sign-in and client).
-- `mcp/app/services/` - use cases (`application.py`), PDF handling and previews (`documents.py`), ZIP downloads, upload links, and `imports.py` (bulk import jobs and their queue).
+- `mcp/app/integrations/` - `parsing.py` (Docling), `ollama.py` (native Ollama model for Pydantic AI), `extraction.py` (classification and extraction agents), and `remote.py` (SSRF-guarded document sources), `embeddings.py` (Sentia embeddings), and `drive.py` (Google Drive sign-in and client).
+- `mcp/app/services/` - use cases (`application.py`), semantic search and answers (`semantic.py`), PDF handling and previews (`documents.py`), ZIP downloads, upload links, and `imports.py` (bulk import jobs and their queue).
 - `mcp/app/transport/` - MCP tools, HTTP routes, bearer authentication, and branding.
 - `ui/` - the Streamlit interface; `services/documents.py` renders pages with PDFium.
 

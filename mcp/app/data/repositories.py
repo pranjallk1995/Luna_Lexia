@@ -436,3 +436,139 @@ class ImportRepository(Repository):
                ORDER BY item_id DESC LIMIT 1""",
             (source, source_id, list(self.IMPORTED_OUTCOMES), content_md5, content_md5),
         )
+
+
+class ChunkRepository(Repository):
+    """Embedded passages of every document, for semantic and hybrid search."""
+
+    # What the passages are built from; a change means the document needs new embeddings.
+    FINGERPRINT = """md5(concat_ws(E'\\x1f', d.title, d.summary, d.doc_type, d.financial_year, d.issuer,
+        d.document_date::text, d.extracted::text, array_to_string(d.page_texts, E'\\x1e')))"""
+    SOURCE_COLUMNS = (
+        "d.document_id, d.name, d.title, d.summary, d.doc_type, d.financial_year, d.issuer, "
+        "d.document_date, d.extracted, d.page_texts"
+    )
+
+    @staticmethod
+    def vector(values: list[float]) -> str:
+        return "[" + ",".join(repr(float(value)) for value in values) + "]"
+
+    def pending(self, model: str, limit: int) -> list[Row]:
+        """Documents with no passages from ``model`` matching their current content."""
+        return self.fetch_all(
+            f"""SELECT {self.SOURCE_COLUMNS}, {self.FINGERPRINT} AS fingerprint
+                FROM document_metadata d
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM document_chunks c
+                    WHERE c.document_id = d.document_id AND c.embedding_model = %s
+                      AND c.source_md5 = {self.FINGERPRINT})
+                ORDER BY d.updated_at DESC LIMIT %s""",
+            (model, limit),
+        )
+
+    def replace(self, document_id: str, fingerprint: str, model: str, chunks: list[tuple[int, str, list[float]]]) -> None:
+        """Swap a document's passages for new ones in one transaction."""
+        with self.database.connect() as connection:
+            connection.execute("DELETE FROM document_chunks WHERE document_id = %s", (document_id,))
+            if not chunks:
+                return
+            with connection.cursor() as cursor:
+                cursor.executemany(
+                    """INSERT INTO document_chunks
+                           (document_id, chunk_index, page, content, source_md5, embedding_model, embedding)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s::vector)""",
+                    [
+                        (document_id, index, page, content, fingerprint, model, self.vector(embedding))
+                        for index, (page, content, embedding) in enumerate(chunks)
+                    ],
+                )
+
+    def forget(self, names: list[str] | None = None) -> int:
+        """Drop passages so the indexer embeds those documents (or all) again."""
+        with self.database.connect() as connection:
+            if names:
+                cursor = connection.execute(
+                    """DELETE FROM document_chunks c USING document_metadata d
+                       WHERE c.document_id = d.document_id AND d.name = ANY(%s)""",
+                    (names,),
+                )
+            else:
+                cursor = connection.execute("DELETE FROM document_chunks")
+            return cursor.rowcount
+
+    def status(self, model: str) -> Row:
+        return self.fetch_one(
+            f"""SELECT
+                    (SELECT count(*) FROM document_metadata) AS documents,
+                    (SELECT count(*) FROM document_metadata d WHERE EXISTS (
+                        SELECT 1 FROM document_chunks c WHERE c.document_id = d.document_id
+                          AND c.embedding_model = %s AND c.source_md5 = {self.FINGERPRINT})) AS indexed,
+                    (SELECT count(*) FROM document_chunks WHERE embedding_model = %s) AS chunks""",
+            (model, model),
+        )
+
+    def search(
+        self,
+        query_vector: list[float] | None,
+        query_text: str,
+        model: str,
+        doc_types: list[str] | None,
+        financial_year: str | None,
+        candidates: int,
+        limit: int,
+        rrf_k: int,
+        any_word: bool = False,
+    ) -> list[Row]:
+        """Rank visible passages by vector similarity, full-text match, or both (Reciprocal Rank Fusion).
+
+        Each list is ranked on its own: cosine distance (``<=>``) through the HNSW index,
+        and ``ts_rank_cd`` over the passage text. A passage scores 1 / (rrf_k + rank) in
+        every list it appears in; the sums decide the final order. With ``any_word``,
+        a passage matches the full-text side when it has any of the query's words (a
+        whole question rarely contains them all); otherwise every word is required.
+        """
+        filters = ["d.hidden = false", "c.embedding_model = %(model)s"]
+        params: dict[str, Any] = {"model": model, "candidates": candidates, "limit": limit, "k": rrf_k,
+                                  "text": query_text}
+        if doc_types:
+            filters.append("d.doc_type = ANY(%(doc_types)s)")
+            params["doc_types"] = doc_types
+        if financial_year:
+            filters.append("d.financial_year = %(financial_year)s")
+            params["financial_year"] = financial_year
+        where = " AND ".join(filters)
+        semantic = "SELECT NULL::bigint AS chunk_id, NULL::bigint AS rank, NULL::float AS similarity WHERE false"
+        if query_vector is not None:
+            params["vector"] = self.vector(query_vector)
+            semantic = f"""SELECT c.chunk_id,
+                    row_number() OVER (ORDER BY c.embedding <=> %(vector)s::vector) AS rank,
+                    1 - (c.embedding <=> %(vector)s::vector) AS similarity
+                FROM document_chunks c JOIN document_metadata d USING (document_id)
+                WHERE {where}
+                ORDER BY c.embedding <=> %(vector)s::vector LIMIT %(candidates)s"""
+        keyword = "SELECT NULL::bigint AS chunk_id, NULL::bigint AS rank WHERE false"
+        if query_text.strip():
+            keyword = f"""SELECT c.chunk_id,
+                    row_number() OVER (ORDER BY ts_rank_cd(c.search_vector, q) DESC) AS rank
+                FROM document_chunks c JOIN document_metadata d USING (document_id),
+                     {"to_tsquery('english', replace(plainto_tsquery('english', %(text)s)::text, ' & ', ' | '))"
+                      if any_word else "websearch_to_tsquery('english', %(text)s)"} q
+                WHERE {where} AND c.search_vector @@ q
+                ORDER BY ts_rank_cd(c.search_vector, q) DESC LIMIT %(candidates)s"""
+        with self.database.connect() as connection:
+            # Keep scanning the HNSW index until enough passages pass the filters.
+            connection.execute("SET LOCAL hnsw.iterative_scan = relaxed_order")
+            connection.execute("SELECT set_config('hnsw.ef_search', %s, true)", (str(max(40, candidates)),))
+            rows = connection.execute(
+                f"""WITH semantic AS ({semantic}), keyword AS ({keyword}),
+                    fused AS (
+                        SELECT chunk_id, s.similarity, s.rank AS semantic_rank, k.rank AS keyword_rank,
+                               coalesce(1.0 / (%(k)s + s.rank), 0) + coalesce(1.0 / (%(k)s + k.rank), 0) AS score
+                        FROM semantic s FULL OUTER JOIN keyword k USING (chunk_id))
+                    SELECT f.score, f.similarity, f.semantic_rank, f.keyword_rank,
+                           c.chunk_id, c.page, c.content, d.name, d.title, d.doc_type, d.financial_year, d.issuer
+                    FROM fused f JOIN document_chunks c USING (chunk_id) JOIN document_metadata d USING (document_id)
+                    ORDER BY f.score DESC, f.similarity DESC NULLS LAST LIMIT %(limit)s""",
+                params,
+            ).fetchall()
+        return [self.serialize(row) for row in rows]

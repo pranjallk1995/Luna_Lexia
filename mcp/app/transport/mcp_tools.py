@@ -184,6 +184,8 @@ class LexiaMCPTools:
         self._register_mutation_tools()
         if service.imports is not None:
             self._register_import_tools()
+        if service.semantic is not None:
+            self._register_semantic_tools()
 
     @staticmethod
     def content(result: PreviewResult) -> list:
@@ -386,6 +388,67 @@ class LexiaMCPTools:
             if delivery == "zip":
                 return await offload(downloads.create_zip, names)
             return await offload(self.preview, names)
+
+    def _register_semantic_tools(self) -> None:
+        server, semantic = self.server, self.service.semantic
+
+        @server.tool()
+        async def semantic_search_documents(
+            query: str,
+            limit: int = 8,
+            doc_types: DocTypes = None,
+            financial_year: str | None = None,
+            mode: Literal["hybrid", "semantic", "keyword"] = "hybrid",
+        ) -> dict[str, Any]:
+            """Find the passages of visible documents that best answer a question or phrase.
+
+            Unlike search_documents, which returns whole documents, this returns the
+            matching passages themselves (up to 1,500 characters each) with their
+            document name, title, and page, so you can answer from them directly.
+            Every document has an "overview" passage (title, issuer, year, summary,
+            and every extracted field) plus its page text in overlapping windows.
+
+            mode "hybrid" (default) fuses meaning-based and exact word matching, so
+            it handles both "how much tax was deducted last year" and an exact PAN
+            or policy number; "semantic" uses meaning only; "keyword" exact words
+            only. similarity is the cosine similarity (0-1) of the passage to the
+            query; score is the fused rank score used for ordering. Cite the
+            document name and page when you use a passage.
+            """
+            hits = await offload(semantic.search, query, limit, doc_types, financial_year, mode)
+            return {"query": query, "mode": mode, "results": hits}
+
+        @server.tool()
+        async def ask_documents(
+            question: str,
+            sources: int = 6,
+            doc_types: DocTypes = None,
+            financial_year: str | None = None,
+        ) -> dict[str, Any]:
+            """Answer a question from the user's documents with Luna's local model, citing sources.
+
+            Retrieves the best passages with hybrid search, then the local model
+            (DOCUMENT_MODEL in Luna Sentia) answers using only them and cites each
+            fact as [n]; "sources" lists what each number refers to. Takes 10-60
+            seconds. When you can read passages yourself, semantic_search_documents
+            is faster and lets you reason over them directly.
+            """
+            return await offload(semantic.ask, question, sources, doc_types, financial_year)
+
+        @server.tool()
+        async def get_semantic_index_status() -> dict[str, Any]:
+            """Report the semantic index: embedding model, documents indexed or pending, passage
+            count, the similarity measure used, and the last embedding error, if any."""
+            return await offload(semantic.status)
+
+        @server.tool()
+        async def reindex_semantic_search(names: list[str] | None = None) -> dict[str, Any]:
+            """Embed the given documents again (or every document when names is omitted).
+
+            Not needed after uploads or edits, which are indexed automatically within
+            seconds; use it after changing the embedding model or passage settings.
+            """
+            return await offload(semantic.reindex, names)
 
     def _register_import_tools(self) -> None:
         server, imports = self.server, self.service.imports

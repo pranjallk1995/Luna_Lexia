@@ -5,8 +5,9 @@ from mcp.server.fastmcp import FastMCP
 
 from app.core.config import AppConfig
 from app.data.database import Database
-from app.data.repositories import DocumentRepository, ImportRepository, PublicURLRepository
+from app.data.repositories import ChunkRepository, DocumentRepository, ImportRepository, PublicURLRepository
 from app.integrations.drive import DriveOAuth
+from app.integrations.embeddings import OllamaEmbedder
 from app.integrations.extraction import DocumentAnalyzer
 from app.integrations.ollama import OllamaChat
 from app.integrations.parsing import DoclingParser
@@ -14,6 +15,7 @@ from app.integrations.remote import DocumentSourceResolver
 from app.services.application import LexiaService
 from app.services.documents import DocumentReader
 from app.services.imports import FileImporter, ImportJobs, ImportService
+from app.services.semantic import Chunker, SemanticIndex
 from app.transport.branding import ServerBranding
 from app.transport.http_routes import LexiaHTTPRoutes
 from app.transport.mcp_tools import LexiaMCPTools
@@ -26,6 +28,7 @@ class LunaLexiaApplication:
         self.config = config
         self.database = Database(config.database_url)
         self.database.initialize_schema()
+        self.database.initialize_semantic_schema(config.embedding_dimensions)
         reader = DocumentReader()
         self.service = LexiaService.create(
             config,
@@ -52,6 +55,15 @@ class LunaLexiaApplication:
             config.max_import_items,
         )
         jobs.resume_unfinished()
+        self.service.semantic = SemanticIndex(
+            ChunkRepository(self.database),
+            OllamaEmbedder(config.ollama_url, config.embedding_model, config.embedding_dimensions),
+            Chunker(config.chunk_chars, config.chunk_overlap_chars),
+            config.ollama_url,
+            config.document_model,
+            config.context_tokens,
+        )
+        self.service.semantic.start()
         self.branding = ServerBranding(config.mcp_public_url, name="Luna Lexia")
         self.mcp = FastMCP(
             "Luna Lexia", host=config.host, port=config.port, icons=self.branding.mcp_icons()
