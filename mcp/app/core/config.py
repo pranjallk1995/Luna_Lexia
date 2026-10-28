@@ -2,7 +2,6 @@
 
 import base64
 import os
-import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar
@@ -18,8 +17,6 @@ class AppConfig:
 
     LOCAL_HOSTS: ClassVar[frozenset[str]] = frozenset({"localhost", "127.0.0.1", "::1"})
     DOCLING_DEVICES: ClassVar[frozenset[str]] = frozenset({"auto", "cuda", "cpu"})
-    # The UI's Streamlit secrets, mounted read-only; Drive import reuses its Google client.
-    GOOGLE_OAUTH_FILE: ClassVar[Path] = Path("/run/secrets/google_oauth.toml")
     GOOGLE_AUTH_URI: ClassVar[str] = "https://accounts.google.com/o/oauth2/auth"
     GOOGLE_TOKEN_URI: ClassVar[str] = "https://oauth2.googleapis.com/token"
     DRIVE_STATE_MAX_AGE_SECONDS: ClassVar[int] = 900
@@ -96,7 +93,7 @@ class AppConfig:
     chunk_overlap_chars: int = 200
     # Where Docling runs its layout, table, and OCR models: auto uses a GPU when present.
     docling_device: str = "auto"
-    # Google Drive import: the UI's OAuth client and a key, derived from the API token,
+    # Google Drive import: a Google OAuth client and a key, derived from the API token,
     # that encrypts the stored refresh token.
     drive_client_id: str = ""
     drive_client_secret: str = ""
@@ -138,15 +135,6 @@ class AppConfig:
     )
     # Public HTTPS origin of this MCP server, used for its icon URLs ("" = embedded icons only).
     mcp_public_url: str = ""
-
-    @staticmethod
-    def google_client(path: Path) -> tuple[str, str]:
-        """Read the Google client ID and secret from the UI's ``[auth]`` secrets, if mounted."""
-        try:
-            auth = tomllib.loads(path.read_text()).get("auth", {})
-        except (OSError, tomllib.TOMLDecodeError):
-            return "", ""
-        return str(auth.get("client_id", "")).strip(), str(auth.get("client_secret", "")).strip()
 
     @staticmethod
     def derive_encryption_key(api_token: str) -> str:
@@ -192,10 +180,9 @@ class AppConfig:
             )
             if not (parsed_public_url.scheme == "https" or local_http) or not parsed_public_url.netloc:
                 raise RuntimeError("MCP_PUBLIC_URL must be an HTTPS URL, or HTTP on localhost.")
-        drive_client_id, drive_client_secret = cls.google_client(cls.GOOGLE_OAUTH_FILE)
         return cls(
-            drive_client_id=drive_client_id,
-            drive_client_secret=drive_client_secret,
+            drive_client_id=os.getenv("DRIVE_CLIENT_ID", "").strip(),
+            drive_client_secret=os.getenv("DRIVE_CLIENT_SECRET", "").strip(),
             drive_redirect_uri=f"{mcp_public_url or 'http://localhost:18004'}/api/drive/callback",
             token_encryption_key=cls.derive_encryption_key(api_token),
             mcp_public_url=mcp_public_url,

@@ -1,10 +1,12 @@
 """Tests for Google Drive imports and bulk uploads."""
 
 import base64
+import os
 import tempfile
 import unittest
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 from cryptography.fernet import Fernet
 
@@ -331,12 +333,13 @@ class TransportTests(ImportTestCase):
 
 
 class DriveConfigTests(unittest.TestCase):
-    def test_google_client_comes_from_the_ui_secrets(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            secrets = Path(directory) / "secrets.toml"
-            secrets.write_text('[auth]\nclient_id = "id.apps"\nclient_secret = "shh"\n')
-            self.assertEqual(AppConfig.google_client(secrets), ("id.apps", "shh"))
-            self.assertEqual(AppConfig.google_client(Path(directory) / "missing.toml"), ("", ""))
+    def test_google_client_comes_from_the_environment(self) -> None:
+        required = {"DATABASE_URL": "postgresql://db/lexia", "LUNALEXIA_API_TOKEN": "t" * 32}
+        with patch.dict(os.environ, required | {"DRIVE_CLIENT_ID": " id.apps ", "DRIVE_CLIENT_SECRET": "shh"}, clear=True):
+            config = AppConfig.from_env()
+        self.assertEqual((config.drive_client_id, config.drive_client_secret), ("id.apps", "shh"))
+        with patch.dict(os.environ, required, clear=True):
+            self.assertEqual(AppConfig.from_env().drive_client_id, "")
 
     def test_encryption_key_is_a_stable_fernet_key(self) -> None:
         key = AppConfig.derive_encryption_key("t" * 32)

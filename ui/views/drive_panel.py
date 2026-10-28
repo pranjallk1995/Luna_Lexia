@@ -34,8 +34,8 @@ class DriveImportPanel(LexiaTab):
             return
         if not status["configured"]:
             st.info(
-                "Google Drive is not set up yet: Lexia's backend could not read the Google "
-                "client ID and secret from ui/.streamlit/secrets.toml.",
+                "Google Drive is not set up yet: set DRIVE_CLIENT_ID and DRIVE_CLIENT_SECRET "
+                "in Lexia's .env and restart it.",
                 icon=":material/settings:",
             )
             return

@@ -19,6 +19,8 @@ services:
       LUNALEXIA_PUBLIC_BASE_URL: ${LUNALEXIA_PUBLIC_BASE_URL:-}
       MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-http://localhost:18004}
       LUNALEXIA_API_TOKEN: ${LUNALEXIA_API_TOKEN:?Set LUNALEXIA_API_TOKEN to a private random value of at least 32 characters}
+      DRIVE_CLIENT_ID: ${DRIVE_CLIENT_ID:-}
+      DRIVE_CLIENT_SECRET: ${DRIVE_CLIENT_SECRET:-}
     expose:
       - "8000"
     ports:
@@ -26,8 +28,6 @@ services:
     volumes:
       - document_data:/data/documents
       - download_data:/data/downloads
-      # Drive import reuses the UI's Google OAuth client.
-      - ./ui/.streamlit/secrets.toml:/run/secrets/google_oauth.toml:ro
     develop:
       watch:
         - action: sync+restart
@@ -82,7 +82,6 @@ services:
             - .pytest_cache/
             - requirements.txt
             - Dockerfile
-            - .streamlit/secrets.toml
         - action: rebuild
           path: ./ui/requirements.txt
         - action: rebuild

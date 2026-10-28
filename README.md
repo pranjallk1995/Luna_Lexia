@@ -217,9 +217,7 @@ to enable them.
 
 Lexia signs people in through Luna Sentia's single sign-on: one Google sign-in at
 Sentia opens every Luna app, and **Sign out** in any app signs out of all of them.
-Lexia's UI needs no Google client of its own; `ui/.streamlit/secrets.toml` now
-only supplies the Google client the backend reuses for [Google Drive import](#google-drive-import).
-Set in `.env`:
+Lexia's UI needs no Google client of its own. Set in `.env`:
 
 - `LUNA_SSO_URL`: Sentia's public sign-on address (`SENTIA_AUTH_PUBLIC_URL` in
   Sentia's `.env`), for example `https://auth.lunaapps.fyi`.
@@ -311,8 +309,9 @@ because the Drive client is not thread-safe.
 
 ### Google Drive import
 
-Drive import reuses the UI's Google OAuth client and needs no settings of its
-own. In Google Cloud, on that client's project:
+Drive import needs a Google OAuth client, set as `DRIVE_CLIENT_ID` and
+`DRIVE_CLIENT_SECRET` in `.env`; Sentia's sign-on client works. In Google Cloud,
+on that client's project:
 1. Enable the **Google Drive API**.
 2. Add `<MCP_PUBLIC_URL>/api/drive/callback` to the client's redirect URIs.
 3. Set the consent screen to **In production** (in *Testing*, Google expires the token after 7 days).
