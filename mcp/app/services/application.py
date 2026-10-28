@@ -52,6 +52,7 @@ SUMMARY_FIELDS = (
     "size_bytes",
     "updated_at",
     "public_url",
+    "analysis_model",
 )
 
 # The summary plus the extracted details, for bulk reading by tax and finance tools.

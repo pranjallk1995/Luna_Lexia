@@ -463,6 +463,7 @@ class DocumentPreviewDialog:
             f"FY {metadata['financial_year']}" if metadata.get("financial_year") else None,
             metadata.get("issuer"),
             f"{metadata['confidence']:.0%} confident" if metadata.get("confidence") is not None else None,
+            f"Analyzed by {metadata['analysis_model']}" if metadata.get("analysis_model") else None,
         ]
         st.markdown(
             '<div class="lv-preview-heading">Extracted details</div>'

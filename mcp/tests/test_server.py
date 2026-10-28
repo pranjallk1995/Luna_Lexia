@@ -112,6 +112,7 @@ class MCPToolTests(ServerTestCase):
         listing = self.call("list_documents", {"doc_types": ["payslip"], "financial_year": "2024-25"})
         self.assertEqual([item["name"] for item in listing["documents"]], ["one.pdf"])
         self.assertNotIn("extracted", listing["documents"][0])
+        self.assertTrue(listing["documents"][0]["analysis_model"])
         first = self.call("list_documents", {"limit": 1})
         self.assertEqual((first["count"], first["next_offset"]), (2, 1))
 

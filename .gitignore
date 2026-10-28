@@ -14,3 +14,7 @@ __pycache__/
 # Editors and OS
 *.swp
 .DS_Store
+
+# Personal documents and model-evaluation results (real payslips, IDs, tax forms)
+model_evaluations/results/
+*.jsonl

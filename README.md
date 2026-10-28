@@ -238,9 +238,8 @@ Lexia asks Ollama for a 16,384-token context per request (`context_tokens` in
 `mcp/app/core/config.py`) and sends at most 24,000 characters of document text.
 With `PAGE_IMAGES_WITH_TEXT=true` (the default), images of the first three pages
 go beside that text, so the model sees which label each value is printed under;
-set it to `false` for faster, text-only analysis. Visia and Fiora use
-`qwen2.5vl:7b`, so Ollama swaps models when the apps alternate; that costs a few
-seconds and needs no configuration.
+set it to `false` for faster, text-only analysis. Visia and Fiora use the same
+model, so Ollama keeps one model loaded for all three apps.
 
 A PAN, TAN, GSTIN, or IFSC that does not have its official format is sent back
 to the model once to be re-read; if it is still malformed, the document keeps it
