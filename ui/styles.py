@@ -274,6 +274,19 @@ class LunaStyle:
                preview and details, so the details sit below the page. */
             div[data-testid="stElementContainer"]:has(.lv-preview-pages) { display:none!important; }
             .lv-page-zoom-level { color:var(--lv-muted); font-size:.75rem; text-align:center; white-space:nowrap; }
+            /* Header buttons take the width of their labels, so a long label never spills
+               over its neighbour; the title column gives way instead. Phones use the
+               compact header below. */
+            @media (min-width:701px) {
+                div[data-testid="stHorizontalBlock"]:has(.lv-header) > div[data-testid="stColumn"]:first-child { flex:1 1 0!important; min-width:0!important; }
+                div[data-testid="stHorizontalBlock"]:has(.lv-header) > div[data-testid="stColumn"]:last-child { flex:0 0 auto!important; width:auto!important; min-width:0!important; }
+                div[data-testid="stHorizontalBlock"]:has(.st-key-open_upload_dialog):not(:has(.lv-header)) { flex-wrap:nowrap!important; justify-content:flex-end; }
+                div[data-testid="stHorizontalBlock"]:has(.st-key-open_upload_dialog):not(:has(.lv-header)) > div[data-testid="stColumn"] { flex:0 0 auto!important; width:auto!important; min-width:0!important; }
+                .st-key-open_upload_dialog,.st-key-open_upload_dialog .stButton,
+                .st-key-header_sign_out,.st-key-header_sign_out .stButton { width:auto!important; min-width:0!important; }
+                .st-key-open_upload_dialog button,.st-key-header_sign_out button { width:auto!important; min-width:max-content!important; }
+                .st-key-use_grid_view button,.st-key-use_list_view button { width:2.625rem!important; min-width:2.625rem!important; padding:0!important; }
+            }
             /* Side by side, the page stays in view while the details beside it scroll. */
             @media (min-width:1025px) {
                 div[data-testid="stHorizontalBlock"]:has(> div[data-testid="stColumn"] .lv-preview-pages) > div[data-testid="stColumn"]:has(.lv-preview-pages) {
