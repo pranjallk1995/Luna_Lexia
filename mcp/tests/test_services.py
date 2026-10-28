@@ -111,19 +111,41 @@ class IngestTests(LexiaServiceTestCase):
         result = self.visible.upload("scan.png", image_bytes())
         self.assertEqual((result["file_format"], result["page_count"]), ("PNG", 1))
 
-    def test_backfill_skips_current_records_and_reports_failures(self):
+    def test_reanalysis_selects_unindexed_changed_and_outdated_files(self):
         self.visible.ingest("march.pdf", pdf_payload())
+        self.visible.ingest("may.pdf", pdf_payload("may"))
         (self.root / "april.pdf").write_bytes(payslip_pdf("april"))
-        (self.root / "broken.pdf").write_bytes(b"%PDF-1.4 not really")
-        result = self.service.indexer.backfill()
-        self.assertEqual(result["analyzed"], ["april.pdf"])
-        self.assertEqual(result["skipped_count"], 1)
-        self.assertEqual([item["name"] for item in result["failed"]], ["broken.pdf"])
+        self.repository.rows["may.pdf"]["schema_version"] = 0
+        preview = self.service.reanalysis.preview()
+        self.assertEqual(
+            [(item["name"], item["reason"]) for item in preview["documents"]],
+            [("april.pdf", "not indexed"), ("may.pdf", "schema version 0")],
+        )
+        self.assertEqual(self.service.reanalysis.preview(include_current=True)["count"], 3)
+        self.assertEqual(self.service.reanalysis.preview(names=["march.pdf"])["count"], 0)
 
-    def test_backfill_reanalyzes_older_schema_versions(self):
+    def test_reanalysis_runs_in_the_background_and_reports_failures(self):
+        self.visible.ingest("march.pdf", pdf_payload())
+        self.repository.rows["march.pdf"]["analysis_model"] = "old-model"
+        (self.root / "broken.pdf").write_bytes(b"%PDF-1.4 not really")
+        reanalysis = self.service.reanalysis
+        self.assertEqual(reanalysis.start()["total"], 2)
+        reanalysis._worker.join(10)
+        status = reanalysis.status()
+        self.assertEqual((status["state"], status["done"], status["remaining"]), ("finished", 2, 0))
+        self.assertEqual(status["reanalyzed"], ["march.pdf"])
+        self.assertEqual([item["name"] for item in status["failed"]], ["broken.pdf"])
+        self.assertNotEqual(self.repository.rows["march.pdf"]["analysis_model"], "old-model")
+        self.assertEqual(reanalysis.preview()["documents"], [{"name": "broken.pdf", "doc_type": None, "reason": "not indexed"}])
+
+    def test_a_stopped_reanalysis_ends_before_the_next_document(self):
         self.visible.ingest("march.pdf", pdf_payload())
         self.repository.rows["march.pdf"]["schema_version"] = 0
-        self.assertEqual(self.service.indexer.backfill()["analyzed"], ["march.pdf"])
+        reanalysis = self.service.reanalysis
+        reanalysis._stop.set()
+        reanalysis._progress = {"state": "running", "total": 1, "done": 0, "reanalyzed": [], "failed": [], "flagged": []}
+        reanalysis.run(reanalysis.preview()["documents"])
+        self.assertEqual((reanalysis.status()["state"], reanalysis.status()["done"]), ("stopped", 0))
 
 
 class PasswordTests(LexiaServiceTestCase):

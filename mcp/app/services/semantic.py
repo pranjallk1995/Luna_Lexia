@@ -285,6 +285,7 @@ class SemanticIndex:
         payload = {
             "model": self.answer_model,
             "stream": False,
+            "think": False,
             "options": {"temperature": 0, "num_ctx": self.context_tokens},
             "messages": [
                 {"role": "system", "content": self.ANSWER_INSTRUCTIONS},

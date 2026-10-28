@@ -186,6 +186,7 @@ class LexiaMCPTools:
             self._register_import_tools()
         if service.semantic is not None:
             self._register_semantic_tools()
+        self._register_reanalysis_tools()
 
     @staticmethod
     def content(result: PreviewResult) -> list:
@@ -204,11 +205,10 @@ class LexiaMCPTools:
         return [listing, image, {"preview": summary}]
 
     def _register_library_tools(self) -> None:
-        server, visible, search, indexer, service = (
+        server, visible, search, service = (
             self.server,
             self.service.visible,
             self.service.search,
-            self.service.indexer,
             self.service,
         )
 
@@ -330,15 +330,6 @@ class LexiaMCPTools:
             """
             return await offload(visible.stats, top_tags)
 
-        @server.tool()
-        async def backfill_documents() -> dict[str, Any]:
-            """Analyze files missing current metadata; idempotent by hash, model, and schema.
-
-            Re-extracts documents analyzed by an older model or schema version
-            and reports files that could not be analyzed under "failed".
-            """
-            return await offload(indexer.backfill)
-
     def _register_delivery_tools(self) -> None:
         server, visible, urls, downloads, previews = (
             self.server,
@@ -449,6 +440,49 @@ class LexiaMCPTools:
             seconds; use it after changing the embedding model or passage settings.
             """
             return await offload(semantic.reindex, names)
+
+    def _register_reanalysis_tools(self) -> None:
+        server, reanalysis = self.server, self.service.reanalysis
+
+        @server.tool()
+        async def preview_reanalysis(
+            names: list[str] | None = None, doc_types: DocTypes = None, include_current: bool = False
+        ) -> dict[str, Any]:
+            """List the documents start_reanalysis would analyze again, with why, without starting.
+
+            By default these are files never indexed, changed on disk, or analyzed by a
+            different model or schema version than the current DOCUMENT_MODEL (shown as
+            "model"). names and doc_types narrow the selection; include_current also
+            selects documents already analyzed by the current model.
+            """
+            return await offload(reanalysis.preview, names, doc_types, include_current)
+
+        @server.tool()
+        async def start_reanalysis(
+            names: list[str] | None = None, doc_types: DocTypes = None, include_current: bool = False
+        ) -> dict[str, Any]:
+            """Re-run parsing, classification, and extraction on stored documents in the background.
+
+            Use after changing the document model or schemas, to bring previously
+            extracted details up to date. Selection is as in preview_reanalysis; each
+            document keeps its stored type. Titles, summaries, tags, details, and review
+            flags are replaced by the new analysis; favorites, hidden status, and public
+            URLs are kept. Each document takes about a minute; follow progress with
+            get_reanalysis_status. After a restart or stop_reanalysis, start again to
+            continue with the documents still left.
+            """
+            return await offload(reanalysis.start, names, doc_types, include_current)
+
+        @server.tool()
+        def get_reanalysis_status() -> dict[str, Any]:
+            """Progress of the current or last re-analysis: counts, the document in progress,
+            failures, and documents whose new analysis has review flags."""
+            return reanalysis.status()
+
+        @server.tool()
+        def stop_reanalysis() -> dict[str, Any]:
+            """Stop the running re-analysis after the document in progress."""
+            return reanalysis.stop()
 
     def _register_import_tools(self) -> None:
         server, imports = self.server, self.service.imports

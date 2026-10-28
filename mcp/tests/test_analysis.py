@@ -343,9 +343,9 @@ class OllamaAdapterTests(unittest.TestCase):
 class PipelineTests(unittest.TestCase):
     """The analysis pipeline, driven by the real agents with scripted model replies."""
 
-    def run_pipeline(self, replies, content=CONTENT, data=None, doc_type=None):
+    def run_pipeline(self, replies, content=CONTENT, data=None, doc_type=None, images_with_text=True):
         self.chat = ScriptedChat(replies)
-        analyzer = DocumentAnalyzer(self.chat, DocumentReader(), 24000, 3)
+        analyzer = DocumentAnalyzer(self.chat, DocumentReader(), 24000, 3, images_with_text)
         pipeline = DocumentPipeline(StubParser(content), analyzer, MetadataRules(32, frozenset()))
         analysis, _ = pipeline.run(data if data is not None else image_bytes(), doc_type)
         return analysis
@@ -361,7 +361,27 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(analysis.tags, ["acme corp", "salary", "payslip", "fy 2024-25"])
         self.assertEqual(analysis.review_flags, [])
         self.assertIn("ACME CORP PAYSLIP", str(self.chat.requests[0]))
+        self.assertIn("ACME CORP PAYSLIP", str(self.chat.requests[1]))
+        self.assertTrue(self.sent_images(self.chat.requests[1]))
+
+    def test_page_images_can_be_left_out_of_the_text_route(self):
+        self.run_pipeline([CLASSIFICATION, PAYSLIP], images_with_text=False)
+        self.assertFalse(self.sent_images(self.chat.requests[0]))
         self.assertFalse(self.sent_images(self.chat.requests[1]))
+
+    def test_a_malformed_pan_is_asked_for_again(self):
+        analysis = self.run_pipeline([CLASSIFICATION, {**PAYSLIP, "pan": "PYBOM1082174/18784"}, PAYSLIP])
+        self.assertEqual(analysis.extracted["pan"], "ABCDE1234F")
+        self.assertEqual(analysis.review_flags, [])
+        feedback = OllamaChat.messages(self.chat.requests[2], None)[-1]["content"]
+        self.assertIn("'PYBOM1082174/18784' is not a valid PAN", feedback)
+
+    def test_a_pan_still_malformed_after_retries_is_kept_and_flagged(self):
+        wrong = {**PAYSLIP, "pan": "TZ163"}
+        analysis = self.run_pipeline([CLASSIFICATION, wrong, wrong, wrong])
+        self.assertEqual(analysis.extracted["pan"], "TZ163")
+        self.assertIsNone(analysis.extraction_error)
+        self.assertIn("Pan 'TZ163' is not a valid PAN.", analysis.review_flags)
 
     def test_schema_errors_are_retried_with_feedback(self):
         broken = {**PAYSLIP, "earnings": "lots"}

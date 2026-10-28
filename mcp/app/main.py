@@ -40,6 +40,7 @@ class LunaLexiaApplication:
                 reader,
                 config.max_prompt_chars,
                 config.max_vision_pages,
+                config.page_images_with_text,
             ),
         )
         sources = DocumentSourceResolver(

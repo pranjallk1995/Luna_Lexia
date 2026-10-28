@@ -32,6 +32,7 @@ from app.integrations.extraction import DocumentAnalyzer
 from app.integrations.parsing import DoclingParser
 from app.services.documents import DocumentPayloadDecoder, PreviewRenderer
 from app.services.pipeline import DocumentPipeline
+from app.services.reanalysis import Reanalysis
 from app.services.downloads import DownloadStore, DownloadTicket
 from app.services.uploads import UploadLinkStore
 
@@ -198,41 +199,56 @@ class DocumentIndexer:
         )
         return self.documents.upsert(record, self.urls.repository.get())
 
-    def backfill(self) -> dict[str, Any]:
-        """Analyze unindexed, changed, or outdated files while skipping current records.
+    def is_current(self, existing: Row | None, digest: str) -> bool:
+        """Whether a record was made from these bytes by the current model and schema."""
+        return bool(
+            existing
+            and existing["content_sha256"] == digest
+            and existing["analysis_model"] == self.analyzer.model
+            and existing["schema_version"] == SCHEMA_VERSION
+        )
 
-        A record is current when its hash, model, and schema version all match.
-        A failing file is reported and the run continues with the next one.
+    def outdated(
+        self,
+        names: list[str] | None = None,
+        doc_types: list[str] | None = None,
+        include_current: bool = False,
+    ) -> list[Row]:
+        """Stored files to analyze again: unindexed, changed, or made by another model or schema.
+
+        ``names`` and ``doc_types`` narrow the selection; ``include_current`` also
+        selects records that are already current. Each entry names the file, its
+        stored type (kept as the type hint), and why it was selected.
         """
         indexed = {item["name"]: item for item in self.documents.list(hidden=None)}
-        analyzed, failed = [], []
-        skipped = 0
+        wanted = set(names or [])
+        chosen = []
         for path in self.storage.document_files():
-            data = path.read_bytes()
             existing = indexed.get(path.name)
-            if (
-                existing
-                and existing["content_sha256"] == hashlib.sha256(data).hexdigest()
-                and existing["analysis_model"] == self.analyzer.model
-                and existing["schema_version"] == SCHEMA_VERSION
-            ):
-                skipped += 1
+            if wanted and path.name not in wanted:
                 continue
-            try:
-                doc_type = existing["doc_type"] if existing else None
-                self.store(path.name, data, *self.analyze(data, doc_type))
-            except (OSError, ValueError, RuntimeError) as error:
-                # PDFium reports unreadable files as RuntimeError subclasses.
-                failed.append({"name": path.name, "error": str(error)})
+            if doc_types and (existing is None or existing["doc_type"] not in doc_types):
                 continue
-            analyzed.append(path.name)
-        return {
-            "analyzed_count": len(analyzed),
-            "skipped_count": skipped,
-            "failed_count": len(failed),
-            "analyzed": analyzed,
-            "failed": failed,
-        }
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            if self.is_current(existing, digest) and not include_current:
+                continue
+            if existing is None:
+                reason = "not indexed"
+            elif existing["content_sha256"] != digest:
+                reason = "file changed"
+            elif existing["analysis_model"] != self.analyzer.model:
+                reason = f"analyzed by {existing['analysis_model']}"
+            elif existing["schema_version"] != SCHEMA_VERSION:
+                reason = f"schema version {existing['schema_version']}"
+            else:
+                reason = "requested"
+            chosen.append({"name": path.name, "doc_type": existing["doc_type"] if existing else None, "reason": reason})
+        return chosen
+
+    def reanalyze(self, name: str, doc_type: str | None) -> Row:
+        """Analyze one stored file again, keeping ``doc_type`` as the type hint, and save it."""
+        data = self.storage.existing_path(name).read_bytes()
+        return self.store(name, data, *self.analyze(data, doc_type))
 
 
 class DocumentCollectionService:
@@ -947,6 +963,8 @@ class LexiaService:
         self.imports: Any = None
         # Set by the composition root: the SemanticIndex for semantic search and answers.
         self.semantic: Any = None
+        # Background re-analysis of stored documents, e.g. after a model change.
+        self.reanalysis = Reanalysis(indexer)
 
     @staticmethod
     def document_types() -> list[dict[str, Any]]:

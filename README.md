@@ -24,7 +24,7 @@ needs to prepare tax-filing supporting documents and track finances, in the
 same way Luna Vita uses Luna Visia. MCP tools let any assistant list, search,
 read, download, upload, rename, correct, and delete documents.
 
-> **Requires Luna Sentia, running and healthy:** Luna Lexia keeps its data in Luna Sentia's PostgreSQL (`luna-sentia-db`) and joins Sentia's `luna_sentia_network`; it has no database of its own. Start [Luna Sentia](https://github.com/pranjallk1995/Luna_Sentia) first and wait until its `postgres` and `ollama` services report healthy, as described under [Start](#start). Sentia also serves the model: Lexia uses `qwen2.5vl:7b` by default, the same model as Visia, so nothing extra is downloaded.
+> **Requires Luna Sentia, running and healthy:** Luna Lexia keeps its data in Luna Sentia's PostgreSQL (`luna-sentia-db`) and joins Sentia's `luna_sentia_network`; it has no database of its own. Start [Luna Sentia](https://github.com/pranjallk1995/Luna_Sentia) first and wait until its `postgres` and `ollama` services report healthy, as described under [Start](#start). Sentia also serves the model: Lexia uses `qwen3-vl:8b-instruct` by default, which Sentia pulls with its other models.
 
 ## How a document is processed
 
@@ -101,7 +101,7 @@ medical, vehicle, PF, and bank-proof documents are not given a financial year
 from their dates, so a 2017 marksheet is not tagged `fy 2017-18`. The
 full JSON schema of each type is available from `list_document_types` and
 `GET /api/document-types`. Schemas live in `mcp/app/core/schemas.py`; bump
-`SCHEMA_VERSION` after changing one so `backfill_documents` re-extracts older
+`SCHEMA_VERSION` after changing one so `start_reanalysis` re-extracts older
 records.
 
 Each record also stores indexed key facts: `financial_year` (the Indian
@@ -158,7 +158,8 @@ Create a private `.env` from `.env.example`:
 ```dotenv
 # Must equal LUNALEXIA_DB_PASSWORD in Luna_Sentia/.env
 POSTGRES_PASSWORD=replace-with-a-private-database-password
-DOCUMENT_MODEL=qwen2.5vl:7b
+DOCUMENT_MODEL=qwen3-vl:8b-instruct
+PAGE_IMAGES_WITH_TEXT=true
 DOCLING_DEVICE=auto
 LUNALEXIA_PUBLIC_BASE_URL=
 LUNALEXIA_API_TOKEN=replace-with-a-random-value-of-at-least-32-characters
@@ -230,11 +231,20 @@ memory beside Ollama's model. On a machine without an NVIDIA GPU, remove
 
 ### Model and context
 
-`DOCUMENT_MODEL` must be listed in Sentia's `SENTIA_MODELS`. Lexia asks Ollama
-for a 16,384-token context per request (`context_tokens` in
+`DOCUMENT_MODEL` (`qwen3-vl:8b-instruct`) must be listed in Sentia's `SENTIA_MODELS`.
+Use the `-instruct` tag: plain `qwen3-vl:8b` is the thinking variant, which
+reasons at length before every reply and ignores Lexia's JSON schema while it does.
+Lexia asks Ollama for a 16,384-token context per request (`context_tokens` in
 `mcp/app/core/config.py`) and sends at most 24,000 characters of document text.
-Visia requests 8,192 tokens, so Ollama reloads the model when the two apps
-alternate; that costs a few seconds and needs no configuration.
+With `PAGE_IMAGES_WITH_TEXT=true` (the default), images of the first three pages
+go beside that text, so the model sees which label each value is printed under;
+set it to `false` for faster, text-only analysis. Visia and Fiora use
+`qwen2.5vl:7b`, so Ollama swaps models when the apps alternate; that costs a few
+seconds and needs no configuration.
+
+A PAN, TAN, GSTIN, or IFSC that does not have its official format is sent back
+to the model once to be re-read; if it is still malformed, the document keeps it
+and is flagged for review.
 
 ### Google Drive import
 
@@ -334,7 +344,21 @@ question -> embedding + full-text query -> cosine similarity and text rank -> fu
 - `reextract_document` - classify and extract again, optionally forcing a `doc_type`.
 - `update_document_metadata` / `update_documents_metadata` - edit titles, summaries, and tags; correct `extracted` fields (validated against the type's schema, with key facts and review flags recomputed); `mark_reviewed=true` clears review flags once a person confirms the details.
 - `rename_document` / `rename_documents` - rename while keeping the immutable ID and public URL.
-- `set_favorite_documents`, `remove_document`, `backfill_documents`, `set_public_base_url`.
+- `set_favorite_documents`, `remove_document`, `set_public_base_url`.
+
+### Re-analysis after a model or schema change
+
+Each record remembers the model (`analysis_model`) and `SCHEMA_VERSION` that
+produced it. After changing `DOCUMENT_MODEL` or a schema, bring older records
+up to date in the background:
+
+- `preview_reanalysis` - the documents a run would analyze and why: not indexed, file changed, analyzed by another model, or an older schema version; narrow with `names` and `doc_types`, or add `include_current=true` to redo current ones too.
+- `start_reanalysis` - run that selection one document at a time (about a minute each), keeping each document's stored type. Titles, summaries, tags, details, and review flags are replaced; favorites, hidden status, and public URLs are kept.
+- `get_reanalysis_status` - done and remaining counts, the document in progress, failures, and documents whose new analysis has review flags.
+- `stop_reanalysis` - stop after the document in progress.
+
+A run keeps no state of its own: selection is by model and schema version, so
+starting again after a stop or restart continues with the documents still left.
 
 ### Semantic search and answers
 

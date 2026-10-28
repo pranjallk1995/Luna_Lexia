@@ -10,7 +10,8 @@ services:
       DATABASE_URL: postgresql://lunalexia:${POSTGRES_PASSWORD:-lunalexia-dev}@luna-sentia-db:5432/lunalexia
       DOCUMENT_DIR: /data/documents
       OLLAMA_URL: ${OLLAMA_URL:-http://luna-sentia-ollama:11434}
-      DOCUMENT_MODEL: ${DOCUMENT_MODEL:-qwen2.5vl:7b}
+      DOCUMENT_MODEL: ${DOCUMENT_MODEL:-qwen3-vl:8b-instruct}
+      PAGE_IMAGES_WITH_TEXT: ${PAGE_IMAGES_WITH_TEXT:-true}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-qwen3-embedding:0.6b}
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1024}
       DOCLING_DEVICE: ${DOCLING_DEVICE:-auto}

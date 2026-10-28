@@ -301,12 +301,7 @@ class ExtractedDetails(BaseModel):
                 start, end = getattr(self, name), getattr(self, f"{name[:-5]}_to")
                 if start and end and start > end:
                     flags.append(f"{field_label(name)} ({start}) is after {name[:-5].replace('_', ' ')} to ({end}).")
-            for suffix, (pattern, label) in IDENTIFIER_PATTERNS.items():
-                value = getattr(self, name)
-                masked = isinstance(value, str) and ("*" in value or "XXXX" in value)
-                if (name == suffix or name.endswith(f"_{suffix}")) and value and not masked:
-                    if not pattern.fullmatch(value):
-                        flags.append(f"{field_label(name)} {value!r} is not a valid {label}.")
+        flags.extend(self.identifier_problems())
         financial_year = getattr(self, "financial_year", None)
         assessment_year = getattr(self, "assessment_year", None)
         if financial_year and assessment_year and previous_year_range(assessment_year) != financial_year:
@@ -314,6 +309,21 @@ class ExtractedDetails(BaseModel):
                 f"Assessment year {assessment_year} does not follow financial year {financial_year}."
             )
         return flags + self.rules()
+
+    def identifier_problems(self) -> list[str]:
+        """A message for every PAN, TAN, GSTIN, or IFSC that does not have its official format.
+
+        Masked values (``XXXXX1234X``, ``*****``) are accepted as printed.
+        """
+        problems = []
+        for name in type(self).model_fields:
+            value = getattr(self, name)
+            if not isinstance(value, str) or "*" in value or "XXXX" in value:
+                continue
+            for suffix, (pattern, label) in IDENTIFIER_PATTERNS.items():
+                if (name == suffix or name.endswith(f"_{suffix}")) and not pattern.fullmatch(value):
+                    problems.append(f"{field_label(name)} {value!r} is not a valid {label}.")
+        return problems
 
     def rules(self) -> list[str]:
         """Type-specific business rules; subclasses override."""
@@ -1502,7 +1512,7 @@ DOCUMENT_TYPES: dict[str, DocumentType] = {
 
 DocTypeName = Literal[tuple(DOCUMENT_TYPES)]  # type: ignore[valid-type]
 
-# Bump when a schema changes so backfill re-extracts documents stored under an older one.
+# Bump when a schema changes so start_reanalysis re-extracts documents stored under an older one.
 SCHEMA_VERSION = 2
 
 

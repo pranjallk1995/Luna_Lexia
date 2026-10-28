@@ -52,6 +52,8 @@ class AppConfig:
     display_max_edge: int = 1280
     # Page images sent to the model when even OCR finds no usable text.
     max_vision_pages: int = 3
+    # Whether those page images also go beside the parsed text, to show the layout.
+    page_images_with_text: bool = True
     # Text sent to the model; stored text (for search and reading) may be longer.
     max_prompt_chars: int = 24_000
     # Ollama context window per request; must hold the prompt, schema, and reply.
@@ -133,7 +135,7 @@ class AppConfig:
         parsed = urlparse(ollama_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise RuntimeError("OLLAMA_URL must be a valid HTTP(S) URL.")
-        document_model = os.getenv("DOCUMENT_MODEL", "qwen2.5vl:7b").strip()
+        document_model = os.getenv("DOCUMENT_MODEL", "qwen3-vl:8b-instruct").strip()
         if not document_model:
             raise RuntimeError("DOCUMENT_MODEL cannot be blank.")
         public_base_url = os.getenv("LUNALEXIA_PUBLIC_BASE_URL", "").strip().rstrip("/")
@@ -147,6 +149,9 @@ class AppConfig:
         docling_device = os.getenv("DOCLING_DEVICE", "auto").strip().lower()
         if docling_device not in cls.DOCLING_DEVICES:
             raise RuntimeError(f"DOCLING_DEVICE must be one of: {', '.join(sorted(cls.DOCLING_DEVICES))}.")
+        page_images_with_text = os.getenv("PAGE_IMAGES_WITH_TEXT", "true").strip().lower()
+        if page_images_with_text not in {"true", "false"}:
+            raise RuntimeError("PAGE_IMAGES_WITH_TEXT must be true or false.")
         mcp_public_url = os.getenv("MCP_PUBLIC_URL", "").strip().rstrip("/")
         if mcp_public_url:
             parsed_public_url = urlparse(mcp_public_url)
@@ -167,6 +172,7 @@ class AppConfig:
             database_url=database_url,
             ollama_url=ollama_url,
             document_model=document_model,
+            page_images_with_text=page_images_with_text == "true",
             embedding_model=os.getenv("EMBEDDING_MODEL", "qwen3-embedding:0.6b").strip(),
             embedding_dimensions=int(os.getenv("EMBEDDING_DIMENSIONS", "1024")),
             public_base_url=public_base_url,

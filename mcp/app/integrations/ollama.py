@@ -58,6 +58,10 @@ def strict_format(schema: dict[str, Any]) -> dict[str, Any]:
 class OllamaChat:
     """Translate Pydantic AI messages to one native Ollama chat request and back."""
 
+    # A reply longer than this is a model stuck repeating itself; cut it off so
+    # validation fails fast and the agent retries, instead of filling the context.
+    MAX_REPLY_TOKENS = 8192
+
     def __init__(self, base_url: str, model: str, context_tokens: int, timeout: float = 600.0) -> None:
         self.base_url = base_url
         self.model = model
@@ -98,7 +102,9 @@ class OllamaChat:
         payload: dict[str, Any] = {
             "model": self.model,
             "stream": False,
-            "options": {"temperature": 0, "num_ctx": self.context_tokens},
+            # Thinking models (Qwen3-VL) otherwise reason at length before every reply.
+            "think": False,
+            "options": {"temperature": 0, "num_ctx": self.context_tokens, "num_predict": self.MAX_REPLY_TOKENS},
             "messages": self.messages(history, info.instructions),
         }
         if output is not None:
