@@ -22,6 +22,7 @@ import httpx
 from app.core.schemas import DOCUMENT_TYPES
 from app.data.repositories import ChunkRepository, Row
 from app.integrations.embeddings import OllamaEmbedder
+from app.core.config import AppConfig
 
 logger = logging.getLogger(__name__)
 
@@ -114,9 +115,6 @@ class Chunker:
 class SemanticIndex:
     """Keep passages embedded, and answer search and questions from them."""
 
-    POLL_SECONDS = 10
-    BATCH_DOCUMENTS = 8
-    SNIPPET_CHARS = 1500
     ANSWER_INSTRUCTIONS = (
         "You answer questions about the user's own documents using only the numbered sources. "
         "Cite every fact with its source number in brackets, like [2]. Copy amounts, dates, and "
@@ -158,7 +156,7 @@ class SemanticIndex:
         """Embed documents whose passages are missing or out of date, a batch at a time."""
         embedded, failed = [], []
         while True:
-            pending = self.chunks.pending(self.tag, self.BATCH_DOCUMENTS)
+            pending = self.chunks.pending(self.tag, AppConfig.SEMANTIC_BATCH_DOCUMENTS)
             pending = [document for document in pending if document["name"] not in failed]
             if not pending:
                 break
@@ -201,7 +199,7 @@ class SemanticIndex:
             except Exception as error:  # noqa: BLE001 - the worker must survive a database or model outage
                 self.last_error = str(error)[:500]
                 logger.exception("Embedding sync failed")
-            self._wake.wait(self.POLL_SECONDS)
+            self._wake.wait(AppConfig.SEMANTIC_POLL_SECONDS)
             self._wake.clear()
 
     def reindex(self, names: list[str] | None = None) -> dict[str, Any]:
@@ -262,7 +260,7 @@ class SemanticIndex:
                 "score": round(float(row["score"]), 5),
                 "similarity": None if row["similarity"] is None else round(float(row["similarity"]), 4),
                 "matched_by": [name for name, rank in (("semantic", row["semantic_rank"]), ("keyword", row["keyword_rank"])) if rank],
-                "text": row["content"][: self.SNIPPET_CHARS],
+                "text": row["content"][: AppConfig.SEMANTIC_SNIPPET_CHARS],
             }
             for row in rows
         ]
@@ -292,7 +290,7 @@ class SemanticIndex:
                 {"role": "user", "content": f"Sources:\n\n{numbered}\n\nQuestion: {question}"},
             ],
         }
-        with httpx.Client(timeout=httpx.Timeout(600.0, connect=10.0)) as client:
+        with httpx.Client(timeout=httpx.Timeout(AppConfig.OLLAMA_TIMEOUT_SECONDS, connect=AppConfig.OLLAMA_CONNECT_TIMEOUT_SECONDS)) as client:
             response = client.post(f"{self.ollama_url}/api/chat", json=payload)
             response.raise_for_status()
         answer = response.json()["message"]["content"].strip()

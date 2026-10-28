@@ -24,6 +24,8 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
+from app.core.config import AppConfig
+
 
 def strict_format(schema: dict[str, Any]) -> dict[str, Any]:
     """Make every property required (still nullable) for constrained decoding.
@@ -60,9 +62,8 @@ class OllamaChat:
 
     # A reply longer than this is a model stuck repeating itself; cut it off so
     # validation fails fast and the agent retries, instead of filling the context.
-    MAX_REPLY_TOKENS = 8192
 
-    def __init__(self, base_url: str, model: str, context_tokens: int, timeout: float = 600.0) -> None:
+    def __init__(self, base_url: str, model: str, context_tokens: int, timeout: float = AppConfig.OLLAMA_TIMEOUT_SECONDS) -> None:
         self.base_url = base_url
         self.model = model
         self.context_tokens = context_tokens
@@ -104,12 +105,12 @@ class OllamaChat:
             "stream": False,
             # Thinking models (Qwen3-VL) otherwise reason at length before every reply.
             "think": False,
-            "options": {"temperature": 0, "num_ctx": self.context_tokens, "num_predict": self.MAX_REPLY_TOKENS},
+            "options": {"temperature": 0, "num_ctx": self.context_tokens, "num_predict": AppConfig.OLLAMA_MAX_REPLY_TOKENS},
             "messages": self.messages(history, info.instructions),
         }
         if output is not None:
             payload["format"] = strict_format(output.json_schema)
-        with httpx.Client(timeout=httpx.Timeout(self.timeout, connect=10.0)) as client:
+        with httpx.Client(timeout=httpx.Timeout(self.timeout, connect=AppConfig.OLLAMA_CONNECT_TIMEOUT_SECONDS)) as client:
             response = client.post(f"{self.base_url}/api/chat", json=payload)
             response.raise_for_status()
         return ModelResponse(parts=[TextPart(response.json()["message"]["content"])])

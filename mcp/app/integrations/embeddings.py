@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import httpx
 
+from app.core.config import AppConfig
+
 
 class OllamaEmbedder:
     """Embed passages and questions with one Ollama embedding model.
@@ -14,10 +16,9 @@ class OllamaEmbedder:
     dot product.
     """
 
-    BATCH = 16
     QUERY_TASK = "Given a question about personal financial or identity documents, retrieve passages that answer it"
 
-    def __init__(self, base_url: str, model: str, dimensions: int, timeout: float = 120.0) -> None:
+    def __init__(self, base_url: str, model: str, dimensions: int, timeout: float = AppConfig.EMBEDDING_TIMEOUT_SECONDS) -> None:
         self.base_url = base_url
         self.model = model
         self.dimensions = dimensions
@@ -25,11 +26,11 @@ class OllamaEmbedder:
 
     def _embed(self, texts: list[str]) -> list[list[float]]:
         vectors: list[list[float]] = []
-        with httpx.Client(timeout=httpx.Timeout(self.timeout, connect=10.0)) as client:
-            for start in range(0, len(texts), self.BATCH):
+        with httpx.Client(timeout=httpx.Timeout(self.timeout, connect=AppConfig.OLLAMA_CONNECT_TIMEOUT_SECONDS)) as client:
+            for start in range(0, len(texts), AppConfig.EMBEDDING_BATCH):
                 response = client.post(
                     f"{self.base_url}/api/embed",
-                    json={"model": self.model, "input": texts[start : start + self.BATCH], "truncate": True},
+                    json={"model": self.model, "input": texts[start : start + AppConfig.EMBEDDING_BATCH], "truncate": True},
                 )
                 response.raise_for_status()
                 vectors.extend(response.json()["embeddings"])

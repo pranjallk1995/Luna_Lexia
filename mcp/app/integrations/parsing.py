@@ -8,6 +8,7 @@ from pathlib import Path
 
 from app.core.models import DocumentContent
 from app.services.documents import PDFIUM_LOCK, DocumentReader
+from app.core.config import AppConfig
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,6 @@ class DoclingParser:
     FALLBACK_NAME = "pdfium"
     # Where the Dockerfile bakes the models; loading from here never contacts the
     # Hugging Face hub, which Docling's layout engine otherwise does on first use.
-    ARTIFACTS_PATH = Path("/root/.cache/docling/models")
     IMAGE_PLACEHOLDER = re.compile(r"^\s*<!-- image -->\s*$", re.MULTILINE)
 
     def __init__(self, reader: DocumentReader, max_text_chars: int, device: str = "auto") -> None:
@@ -57,7 +57,7 @@ class DoclingParser:
                     do_ocr=True,
                     do_table_structure=True,
                     accelerator_options=AcceleratorOptions(device=AcceleratorDevice(self.device)),
-                    artifacts_path=self.ARTIFACTS_PATH if self.ARTIFACTS_PATH.is_dir() else None,
+                    artifacts_path=AppConfig.DOCLING_ARTIFACTS_PATH if AppConfig.DOCLING_ARTIFACTS_PATH.is_dir() else None,
                 )
                 self._converter = DocumentConverter(
                     allowed_formats=[InputFormat.PDF, InputFormat.IMAGE],

@@ -9,6 +9,8 @@ from urllib.parse import urlparse
 
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 
+from app.core.config import AppConfig
+
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 FOLDER_TYPE = "application/vnd.google-apps.folder"
 # Google Docs, Sheets, and Slides have no file bytes; Drive exports them as PDF.
@@ -107,8 +109,8 @@ class DriveOAuth:
             "web": {
                 "client_id": self.client_id,
                 "client_secret": self.client_secret,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
+                "auth_uri": AppConfig.GOOGLE_AUTH_URI,
+                "token_uri": AppConfig.GOOGLE_TOKEN_URI,
             }
         }
         return Flow.from_client_config(
@@ -132,7 +134,7 @@ class DriveOAuth:
     def exchange(self, callback_url: str, state: str) -> tuple[str, str]:
         """Finish the sign-in; return the account email and its refresh token."""
         try:
-            self.signer.loads(state, max_age=900)
+            self.signer.loads(state, max_age=AppConfig.DRIVE_STATE_MAX_AGE_SECONDS)
         except BadSignature as error:
             raise PermissionError("This Google Drive sign-in link expired or was not started by Lexia.") from error
         flow = self.flow(state)
@@ -163,7 +165,7 @@ class DriveClient:
         credentials = Credentials(
             None,
             refresh_token=refresh_token,
-            token_uri="https://oauth2.googleapis.com/token",
+            token_uri=AppConfig.GOOGLE_TOKEN_URI,
             client_id=client_id,
             client_secret=client_secret,
             scopes=SCOPES,

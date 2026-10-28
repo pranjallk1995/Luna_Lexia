@@ -8,6 +8,8 @@ import tempfile
 import threading
 from pathlib import Path
 
+from app.core.config import AppConfig
+
 
 class OfficeConverter:
     """Turn DOCX, DOC, XLSX, and XLS bytes into PDF bytes.
@@ -24,8 +26,6 @@ class OfficeConverter:
     one at a time.
     """
 
-    BINARY = "soffice"
-    TIMEOUT_SECONDS = 120
     EXTENSIONS = {"DOCX": ".docx", "DOC": ".doc", "XLSX": ".xlsx", "XLS": ".xls"}
     SPREADSHEETS = frozenset({"XLSX", "XLS"})
     WRITER_FILTER = "pdf:writer_pdf_Export"
@@ -45,7 +45,7 @@ class OfficeConverter:
             source = Path(workdir) / f"document{self.EXTENSIONS[file_format]}"
             source.write_bytes(data)
             command = [
-                self.BINARY,
+                AppConfig.OFFICE_BINARY,
                 f"-env:UserInstallation={self.profile_dir.as_uri()}",
                 "--headless",
                 "--norestore",
@@ -60,7 +60,7 @@ class OfficeConverter:
                     command,
                     check=True,
                     capture_output=True,
-                    timeout=self.TIMEOUT_SECONDS,
+                    timeout=AppConfig.OFFICE_TIMEOUT_SECONDS,
                     env={**os.environ, "SOURCE_DATE_EPOCH": "0"},
                 )
             except FileNotFoundError as error:

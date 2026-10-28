@@ -10,6 +10,7 @@ from test_services import LexiaServiceTestCase
 from app.integrations.drive import DriveFile
 from app.integrations.office import OfficeConverter
 from app.services.documents import OLE_SIGNATURE, DocumentPayloadDecoder, DocumentReader
+from app.core.config import AppConfig
 
 
 class OfficeDetectionTests(unittest.TestCase):
@@ -76,7 +77,7 @@ class OfficeUploadTests(LexiaServiceTestCase):
         self.assertEqual(self.converter.calls, ["DOCX", "XLSX"])
 
 
-@unittest.skipUnless(shutil.which(OfficeConverter.BINARY), "LibreOffice is not installed")
+@unittest.skipUnless(shutil.which(AppConfig.OFFICE_BINARY), "LibreOffice is not installed")
 class LibreOfficeConversionTests(unittest.TestCase):
     def setUp(self):
         self.converter = OfficeConverter()

@@ -6,6 +6,7 @@ import httpx
 import pandas as pd
 import streamlit as st
 
+from config import UIConfig
 from services.api import LunaLexiaAPI
 from views.shared import LexiaTab
 
@@ -15,7 +16,6 @@ class DriveImportPanel(LexiaTab):
 
     ACTIVE_STATUSES = ("queued", "listing", "running")
     # How often the import list refreshes itself while the dialog is open.
-    REFRESH_SECONDS = 3
 
     OUTCOME_ICONS = {
         "imported": "✅",
@@ -116,7 +116,7 @@ class DriveImportPanel(LexiaTab):
 
         # Refreshes itself, so progress and elapsed time stay current and new or retried
         # imports appear; reports of finished imports are fetched once (see _report).
-        @st.fragment(run_every=self.REFRESH_SECONDS)
+        @st.fragment(run_every=UIConfig.DRIVE_REFRESH_SECONDS)
         def job_list() -> None:
             try:
                 jobs = self.api.import_jobs(5)

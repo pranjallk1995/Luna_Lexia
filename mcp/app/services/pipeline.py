@@ -15,12 +15,12 @@ from app.core.models import DocumentAnalysis, DocumentClassification, DocumentCo
 from app.core.schemas import DOCUMENT_TYPES, DocumentType, ExtractedDetails, KeyFacts, document_type
 from app.integrations.extraction import DocumentAnalyzer
 from app.integrations.parsing import DoclingParser
+from app.core.config import AppConfig
 
 
 class DocumentPipeline:
     """Run parsing, classification, extraction (with a page-image fallback), and validation."""
 
-    LOW_CONFIDENCE = 0.6
     NO_TEXT_FLAG = "No text could be read; the details were taken from page images."
     IMAGE_FALLBACK_FLAG = "Extraction from the text failed; the details were read from page images."
     FAILED_FLAG = "Details could not be extracted; re-extract the document or enter them manually."
@@ -71,7 +71,7 @@ class DocumentPipeline:
                 f"Stored as a {hint.label}, but it reads like a "
                 f"{DOCUMENT_TYPES[classification.doc_type].label}."
             )
-        elif classification.confidence < self.LOW_CONFIDENCE:
+        elif classification.confidence < AppConfig.LOW_CONFIDENCE:
             flags.append(f"The document type was identified with low confidence ({classification.confidence:.0%}).")
         if from_images:
             flags.append(self.IMAGE_FALLBACK_FLAG if content.has_text else self.NO_TEXT_FLAG)

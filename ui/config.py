@@ -8,6 +8,29 @@ from urllib.parse import urlparse
 
 
 @dataclass(frozen=True)
+class SSOConfig:
+    """Single sign-on through Luna Sentia; this block is identical in every Luna app's config.py."""
+
+    COOKIE_NAME: ClassVar[str] = "luna_sso"
+    SESSION_HEADER: ClassVar[str] = "X-Luna-Session"
+    # How long a confirmed session is trusted before asking Sentia again, so a sign-out
+    # in another app takes effect here within this many seconds.
+    RECHECK_SECONDS: ClassVar[int] = 60
+    LOOKUP_TIMEOUT_SECONDS: ClassVar[float] = 5.0
+
+    public_url: str
+    internal_url: str = "http://luna-sentia-auth:8000"
+
+    @classmethod
+    def from_env(cls) -> "SSOConfig":
+        public_url = os.getenv("LUNA_SSO_URL", "").strip().rstrip("/")
+        if not public_url:
+            raise RuntimeError("LUNA_SSO_URL must be the public address of Luna Sentia's auth service.")
+        internal_url = os.getenv("LUNA_SSO_INTERNAL_URL", "").strip().rstrip("/")
+        return cls(public_url=public_url, internal_url=internal_url or cls.internal_url)
+
+
+@dataclass(frozen=True)
 class UIConfig:
     """Immutable UI layout and backend-connection settings."""
 
@@ -16,11 +39,20 @@ class UIConfig:
     MAX_TAGS: ClassVar[int] = 32
     # Word and Excel files are converted to PDF by the backend and stored as PDFs.
     UPLOAD_TYPES: ClassVar[tuple[str, ...]] = ("pdf", "png", "jpg", "jpeg", "webp", "docx", "doc", "xlsx", "xls")
+    API_TIMEOUT_SECONDS: ClassVar[float] = 30.0
+    LIST_TIMEOUT_SECONDS: ClassVar[float] = 10.0
+    IMPORT_TIMEOUT_SECONDS: ClassVar[float] = 60.0
+    # Uploads and re-extraction wait for the backend's document model to read every page.
+    EXTRACT_TIMEOUT_SECONDS: ClassVar[float] = 900.0
+    THUMBNAIL_CACHE_ENTRIES: ClassVar[int] = 256
+    PREVIEW_CACHE_ENTRIES: ClassVar[int] = 64
+    DRIVE_REFRESH_SECONDS: ClassVar[int] = 3
 
     document_dir: Path
     api_url: str
     api_token: str
     allowed_emails: frozenset[str]
+    sso: SSOConfig
     # Portrait-ish cards show the top of the first page, where the letterhead is.
     card_size: tuple[int, int] = (420, 300)
     page_preview_edge: int = 1400
@@ -54,4 +86,5 @@ class UIConfig:
             api_url=api_url,
             api_token=api_token,
             allowed_emails=allowed_emails,
+            sso=SSOConfig.from_env(),
         )

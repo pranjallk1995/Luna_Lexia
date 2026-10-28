@@ -65,14 +65,14 @@ class DocumentFiles:
         return self.document_dir / name
 
     @staticmethod
-    @st.cache_data(show_spinner=False, max_entries=256)
+    @st.cache_data(show_spinner=False, max_entries=UIConfig.THUMBNAIL_CACHE_ENTRIES)
     def _thumbnail(document_path: str, modified_ns: int, size: tuple[int, int]) -> Image.Image:
         del modified_ns
         page = render_page(Path(document_path), 0, max(size) * 2)
         return ImageOps.fit(page, size, method=Image.Resampling.LANCZOS, centering=(0.5, 0.0))
 
     @staticmethod
-    @st.cache_data(show_spinner=False, max_entries=64)
+    @st.cache_data(show_spinner=False, max_entries=UIConfig.PREVIEW_CACHE_ENTRIES)
     def _page(document_path: str, modified_ns: int, index: int, max_edge: int) -> Image.Image:
         del modified_ns
         return render_page(Path(document_path), index, max_edge)

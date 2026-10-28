@@ -20,6 +20,31 @@ class AppConfig:
     DOCLING_DEVICES: ClassVar[frozenset[str]] = frozenset({"auto", "cuda", "cpu"})
     # The UI's Streamlit secrets, mounted read-only; Drive import reuses its Google client.
     GOOGLE_OAUTH_FILE: ClassVar[Path] = Path("/run/secrets/google_oauth.toml")
+    GOOGLE_AUTH_URI: ClassVar[str] = "https://accounts.google.com/o/oauth2/auth"
+    GOOGLE_TOKEN_URI: ClassVar[str] = "https://oauth2.googleapis.com/token"
+    DRIVE_STATE_MAX_AGE_SECONDS: ClassVar[int] = 900
+    ASSET_DIR: ClassVar[Path] = Path(__file__).resolve().parent.parent / "assets"
+    DOCLING_ARTIFACTS_PATH: ClassVar[Path] = Path("/root/.cache/docling/models")
+    OFFICE_BINARY: ClassVar[str] = "soffice"
+    OFFICE_TIMEOUT_SECONDS: ClassVar[int] = 120
+    REMOTE_FETCH_TIMEOUT_SECONDS: ClassVar[float] = 30.0
+    OLLAMA_TIMEOUT_SECONDS: ClassVar[float] = 600.0
+    OLLAMA_CONNECT_TIMEOUT_SECONDS: ClassVar[float] = 10.0
+    OLLAMA_MAX_REPLY_TOKENS: ClassVar[int] = 8192
+    EMBEDDING_TIMEOUT_SECONDS: ClassVar[float] = 120.0
+    EMBEDDING_BATCH: ClassVar[int] = 16
+    # Largest page image edge sent to the model, and how much text classification reads.
+    MODEL_IMAGE_EDGE: ClassVar[int] = 1600
+    CLASSIFY_TEXT_CHARS: ClassVar[int] = 6000
+    # Below this classification confidence a document is flagged for review.
+    LOW_CONFIDENCE: ClassVar[float] = 0.6
+    SEMANTIC_POLL_SECONDS: ClassVar[int] = 10
+    SEMANTIC_BATCH_DOCUMENTS: ClassVar[int] = 8
+    SEMANTIC_SNIPPET_CHARS: ClassVar[int] = 1500
+    BATCH_MAX_DOCUMENTS: ClassVar[int] = 100
+    # Leftover archives without a ticket are only removed once clearly abandoned, so a
+    # concurrent purge never deletes an archive whose ticket is being written.
+    DOWNLOAD_LEFTOVER_GRACE_SECONDS: ClassVar[int] = 60 * 60
 
     document_dir: Path
     database_url: str
@@ -56,7 +81,8 @@ class AppConfig:
     page_images_with_text: bool = True
     # Text sent to the model; stored text (for search and reading) may be longer.
     max_prompt_chars: int = 24_000
-    # Ollama context window per request; must hold the prompt, schema, and reply.
+    # Ollama context window per request; must hold the prompt, schema, and reply. Visia
+    # and Fiora request the same, so the apps share one loaded copy of the model.
     context_tokens: int = 16_384
     # Semantic search: the Sentia embedding model, its vector size, and passage sizes.
     embedding_model: str = "qwen3-embedding:0.6b"

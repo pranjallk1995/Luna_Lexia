@@ -20,7 +20,7 @@ class LunaLexiaAPI:
         method: str,
         path: str,
         *,
-        timeout: float = 30.0,
+        timeout: float = UIConfig.API_TIMEOUT_SECONDS,
         **kwargs: Any,
     ) -> httpx.Response:
         response = httpx.request(
@@ -64,12 +64,12 @@ class LunaLexiaAPI:
         return f"{prefix}/{quote(name, safe='')}{suffix}"
 
     def document_types(self) -> list[dict[str, Any]]:
-        return self.request("GET", "/api/document-types", timeout=10.0).json()["document_types"]
+        return self.request("GET", "/api/document-types", timeout=UIConfig.LIST_TIMEOUT_SECONDS).json()["document_types"]
 
     # Visible documents
 
     def metadata(self) -> list[dict[str, Any]]:
-        return self.request("GET", "/api/metadata", timeout=10.0).json()["documents"]
+        return self.request("GET", "/api/metadata", timeout=UIConfig.LIST_TIMEOUT_SECONDS).json()["documents"]
 
     def upload_document(
         self, name: str, content_base64: str, password: str | None = None, doc_type: str | None = None
@@ -79,7 +79,7 @@ class LunaLexiaAPI:
             "POST",
             "/api/documents",
             json={key: value for key, value in payload.items() if value},
-            timeout=900.0,
+            timeout=UIConfig.EXTRACT_TIMEOUT_SECONDS,
         ).json()
 
     def delete_document(self, name: str) -> None:
@@ -100,11 +100,11 @@ class LunaLexiaAPI:
             "POST",
             self.document_path("/api/documents", name, "/reextract"),
             json={"doc_type": doc_type},
-            timeout=900.0,
+            timeout=UIConfig.EXTRACT_TIMEOUT_SECONDS,
         ).json()
 
     def favorites(self) -> list[dict[str, Any]]:
-        return self.request("GET", "/api/favorites", timeout=10.0).json()["documents"]
+        return self.request("GET", "/api/favorites", timeout=UIConfig.LIST_TIMEOUT_SECONDS).json()["documents"]
 
     def set_favorites(self, names: list[str], favorite: bool) -> None:
         self.request("POST", "/api/favorites", json={"names": names, "favorite": favorite})
@@ -112,42 +112,42 @@ class LunaLexiaAPI:
     # Google Drive and bulk imports
 
     def drive_status(self) -> dict[str, Any]:
-        return self.request("GET", "/api/drive/status", timeout=10.0).json()
+        return self.request("GET", "/api/drive/status", timeout=UIConfig.LIST_TIMEOUT_SECONDS).json()
 
     def drive_authorization_url(self) -> str:
-        return self.request("GET", "/api/drive/authorization-url", timeout=10.0).json()["url"]
+        return self.request("GET", "/api/drive/authorization-url", timeout=UIConfig.LIST_TIMEOUT_SECONDS).json()["url"]
 
     def drive_disconnect(self) -> None:
         self.request("POST", "/api/drive/disconnect")
 
     def drive_folders(self, parent_id: str | None = None) -> list[dict[str, Any]]:
         params = {"parent": parent_id} if parent_id else None
-        return self.request("GET", "/api/drive/folders", params=params, timeout=30.0).json()["folders"]
+        return self.request("GET", "/api/drive/folders", params=params, timeout=UIConfig.API_TIMEOUT_SECONDS).json()["folders"]
 
     def import_drive_folder(self, folder: str, recursive: bool, doc_type: str | None) -> dict[str, Any]:
         return self.request(
             "POST",
             "/api/imports/drive-folder",
             json={"folder": folder, "recursive": recursive, "doc_type": doc_type},
-            timeout=60.0,
+            timeout=UIConfig.IMPORT_TIMEOUT_SECONDS,
         ).json()
 
     def upload_batch(self, items: list[dict[str, Any]]) -> dict[str, Any]:
-        return self.request("POST", "/api/imports/batch", json={"items": items}, timeout=60.0).json()
+        return self.request("POST", "/api/imports/batch", json={"items": items}, timeout=UIConfig.IMPORT_TIMEOUT_SECONDS).json()
 
     def import_jobs(self, limit: int = 5) -> list[dict[str, Any]]:
-        return self.request("GET", "/api/imports", params={"limit": limit}, timeout=10.0).json()["jobs"]
+        return self.request("GET", "/api/imports", params={"limit": limit}, timeout=UIConfig.LIST_TIMEOUT_SECONDS).json()["jobs"]
 
     def import_job(self, job_id: str) -> dict[str, Any]:
-        return self.request("GET", f"/api/imports/{job_id}", timeout=10.0).json()
+        return self.request("GET", f"/api/imports/{job_id}", timeout=UIConfig.LIST_TIMEOUT_SECONDS).json()
 
     def retry_import_job(self, job_id: str) -> dict[str, Any]:
-        return self.request("POST", f"/api/imports/{job_id}/retry", timeout=60.0).json()
+        return self.request("POST", f"/api/imports/{job_id}/retry", timeout=UIConfig.IMPORT_TIMEOUT_SECONDS).json()
 
     # Hidden documents
 
     def hidden_documents(self) -> list[dict[str, Any]]:
-        return self.request("GET", "/api/hidden/documents", timeout=10.0).json()["documents"]
+        return self.request("GET", "/api/hidden/documents", timeout=UIConfig.LIST_TIMEOUT_SECONDS).json()["documents"]
 
     def hide_documents(self, names: list[str]) -> None:
         self.request("POST", "/api/hidden/hide", json={"names": names})
@@ -168,5 +168,5 @@ class LunaLexiaAPI:
             "POST",
             self.document_path("/api/hidden/documents", name, "/reextract"),
             json={"doc_type": doc_type},
-            timeout=900.0,
+            timeout=UIConfig.EXTRACT_TIMEOUT_SECONDS,
         ).json()

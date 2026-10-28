@@ -161,7 +161,7 @@ class LunaLexiaApp:
         SessionState.initialize()
         self.show_reload_notice()
         LunaStyle.apply(st.session_state.color_theme)
-        LunaSingleSignOn(self.config.allowed_emails).require_login(
+        LunaSingleSignOn(self.config.allowed_emails, self.config.sso).require_login(
             "Luna Lexia", "Private AI-managed document storage"
         )
         open_upload = self.render_header()

@@ -408,7 +408,6 @@ class VisibleDocumentService(DocumentCollectionService):
 
     HIDDEN = False
     WRONG_COLLECTION_MESSAGE = "Hidden documents require authentication."
-    BATCH_MAX_DOCUMENTS = 100
     RENAME_STEM_PATTERN = re.compile(r"[A-Za-z0-9_]+")
 
     def __init__(
@@ -555,8 +554,8 @@ class VisibleDocumentService(DocumentCollectionService):
         """Apply each change on its own, reporting failures instead of stopping."""
         if not items:
             raise ValueError("Provide at least one document change.")
-        if len(items) > self.BATCH_MAX_DOCUMENTS:
-            raise ValueError(f"Change at most {self.BATCH_MAX_DOCUMENTS} documents at a time.")
+        if len(items) > AppConfig.BATCH_MAX_DOCUMENTS:
+            raise ValueError(f"Change at most {AppConfig.BATCH_MAX_DOCUMENTS} documents at a time.")
         succeeded, failed = [], []
         for name, apply in items:
             try:
