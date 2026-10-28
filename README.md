@@ -32,6 +32,15 @@ The Streamlit interface lets you upload, search, view, favorite, hide, and
 correct documents; each card shows the document type, financial year, size, and
 tags, and anything that needs review is flagged.
 
+<p align="center">
+  <img src="docs/assets/luna-lexia-chatgpt-mcp.png" alt="ChatGPT using Luna Lexia's MCP tools to copy a landlord's PAN into every rental agreement, beside the document in Lexia (personal details blurred)" width="900">
+</p>
+
+Any assistant connected over MCP works on the same library. Here ChatGPT, asked
+to copy the owner's PAN from one rental agreement into the others, corrects the
+extracted details of all five agreements; their review warnings clear, and the
+original PDFs are untouched.
+
 > **Requires Luna Sentia, running and healthy:** Luna Lexia keeps its data in Luna Sentia's PostgreSQL (`luna-sentia-db`) and joins Sentia's `luna_sentia_network`; it has no database of its own. Start [Luna Sentia](https://github.com/pranjallk1995/Luna_Sentia) first and wait until its `postgres` and `ollama` services report healthy, as described under [Start](#start). Sentia also serves the model: Lexia uses `qwen3-vl:8b-instruct` by default, which Sentia pulls with its other models.
 
 ## How a document is processed
@@ -149,7 +158,8 @@ rather than the filename when linking a Fiora record to its supporting document.
 Every Luna app is a Streamlit UI plus a FastMCP service on Luna Sentia's
 `luna_sentia_network`: its data lives in Sentia's PostgreSQL, people sign in
 through Sentia's `auth`, and model calls go to Sentia's Ollama. Orange lines are
-the calls between apps; the grey dashed line is the planned Lexia-to-Fiora link.
+the calls between apps; grey dashed lines are planned links into Fiora: Lexia's
+extracted tax details and Visia's transaction images and icons.
 
 ## Start
 
