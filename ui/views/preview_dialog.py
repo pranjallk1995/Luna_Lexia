@@ -7,6 +7,7 @@ from pathlib import Path
 import httpx
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from config import UIConfig
 from domain.tables import VALUE_COLUMN, apply_edits, cell, table_rows, table_values
@@ -38,6 +39,15 @@ class PreviewKeys:
     @property
     def page(self) -> str:
         return f"preview_page_{self.name}"
+
+    @property
+    def zoom(self) -> str:
+        return f"preview_zoom_{self.name}"
+
+    @property
+    def expanded(self) -> str:
+        """Set while the page spans the whole dialog, with the details below it."""
+        return f"preview_expanded_{self.name}"
 
     @property
     def tag_adding(self) -> str:
@@ -89,6 +99,41 @@ class DocumentPreviewDialog:
         "title": ("Title", 120, ":material/title:"),
         "summary": ("Summary", 1000, ":material/notes:"),
     }
+    # Percent of the page column's width; 100 fits the page and needs no scrolling.
+    ZOOM_LEVELS = (100, 150, 200, 300)
+    ZOOM_FRAME_HEIGHT = 720
+    # Markdown cannot run scripts, so a zoomed page renders in a component frame where
+    # grabbing the page and dragging it scrolls the frame.
+    ZOOM_FRAME = """
+        <style>
+            html, body {{ margin:0; height:100%; }}
+            #frame {{
+                height:100%; overflow:auto; cursor:grab; user-select:none;
+                border:1px solid rgba(255,255,255,.14); border-radius:.8rem;
+                background:#ffffff; box-sizing:border-box;
+            }}
+            #frame.dragging {{ cursor:grabbing; }}
+            #frame img {{ display:block; width:{zoom}%; max-width:none; pointer-events:none; }}
+        </style>
+        <div id="frame"><img src="{source}" alt="Page {page}"></div>
+        <script>
+            const frame = document.getElementById("frame");
+            let start = null;
+            frame.addEventListener("pointerdown", (event) => {{
+                start = {{ x: event.clientX, y: event.clientY, left: frame.scrollLeft, top: frame.scrollTop }};
+                frame.setPointerCapture(event.pointerId);
+                frame.classList.add("dragging");
+            }});
+            frame.addEventListener("pointermove", (event) => {{
+                if (!start) return;
+                frame.scrollLeft = start.left - (event.clientX - start.x);
+                frame.scrollTop = start.top - (event.clientY - start.y);
+            }});
+            const stop = () => {{ start = null; frame.classList.remove("dragging"); }};
+            frame.addEventListener("pointerup", stop);
+            frame.addEventListener("pointercancel", stop);
+        </script>
+    """
 
     def __init__(
         self, context: LexiaContext, actions: GalleryActions, metadata_by_name: dict[str, dict]
@@ -121,8 +166,10 @@ class DocumentPreviewDialog:
             st.rerun()
         st.session_state.setdefault(keys.generation, 0)
         metadata = self.metadata_by_name.get(document_path.name) or {}
-        # Phones get one column: the page preview first, then the name, title, summary, and tags.
-        if self.layout.is_mobile():
+        # Wide screens keep the page on the left and every editable detail on the right, so
+        # values can be checked against the page. Phones, and a page expanded to full width,
+        # get one column: the page first, then the details below it.
+        if self.layout.is_mobile() or st.session_state.get(keys.expanded, False):
             page_column, detail_column = st.container(), st.container()
         else:
             page_column, detail_column = st.columns([5, 6], gap="medium")
@@ -135,22 +182,70 @@ class DocumentPreviewDialog:
             for field in self.TEXT_FIELDS:
                 self._render_text(keys, field, str(metadata.get(field) or ""))
             self._render_tags(keys, list(metadata.get("tags") or []))
-        self._render_review(keys, metadata)
-        self._render_details(keys, metadata)
-        self._render_reextract(keys, metadata)
+            self._render_review(keys, metadata)
+            self._render_details(keys, metadata)
+            self._render_reextract(keys, metadata)
 
     # Pages
 
-    def _render_pages(self, keys: PreviewKeys, document_path: Path, metadata: dict) -> None:
-        page_count = int(metadata.get("page_count") or 1)
+    def _step_zoom(self, keys: PreviewKeys, step: int) -> None:
+        index = self.ZOOM_LEVELS.index(st.session_state[keys.zoom]) + step
+        st.session_state[keys.zoom] = self.ZOOM_LEVELS[max(0, min(index, len(self.ZOOM_LEVELS) - 1))]
+
+    @staticmethod
+    def _toggle_expanded(keys: PreviewKeys) -> None:
+        st.session_state[keys.expanded] = not st.session_state.get(keys.expanded, False)
+
+    def _render_page_tools(self, keys: PreviewKeys, page_count: int) -> int:
+        """Page picker, zoom out, zoom level, zoom in, and full-width toggle; returns the page."""
+        zoom = st.session_state[keys.zoom]
+        expanded = st.session_state.get(keys.expanded, False)
+        picker_column, count_column, out_column, level_column, in_column, expand_column = st.columns(
+            [3, 1.3, 0.8, 1.1, 0.8, 0.8], vertical_alignment="center"
+        )
         page = 1
         if page_count > 1:
-            picker_column, count_column = st.columns([4, 1], vertical_alignment="center")
             page = picker_column.number_input(
                 "Page", min_value=1, max_value=page_count, step=1, key=keys.page, label_visibility="collapsed"
             )
             count_column.markdown(f'<div class="lv-card-facts">of {page_count}</div>', unsafe_allow_html=True)
-        st.image(self.files.page(document_path, int(page) - 1), width="stretch")
+        self._marker(out_column, "lv-preview-icon-action")
+        out_column.button(
+            ":material/zoom_out:",
+            key=f"zoom_out_{keys.name}",
+            disabled=zoom == self.ZOOM_LEVELS[0],
+            on_click=self._step_zoom,
+            args=(keys, -1),
+        )
+        level_column.markdown(f'<div class="lv-page-zoom-level">{zoom}%</div>', unsafe_allow_html=True)
+        in_column.button(
+            ":material/zoom_in:",
+            key=f"zoom_in_{keys.name}",
+            disabled=zoom == self.ZOOM_LEVELS[-1],
+            on_click=self._step_zoom,
+            args=(keys, 1),
+        )
+        if not self.layout.is_mobile():
+            expand_column.button(
+                ":material/close_fullscreen:" if expanded else ":material/open_in_full:",
+                key=f"expand_{keys.name}",
+                on_click=self._toggle_expanded,
+                args=(keys,),
+            )
+        return int(page)
+
+    def _render_pages(self, keys: PreviewKeys, document_path: Path, metadata: dict) -> None:
+        st.session_state.setdefault(keys.zoom, self.ZOOM_LEVELS[0])
+        page = self._render_page_tools(keys, int(metadata.get("page_count") or 1))
+        zoom = st.session_state[keys.zoom]
+        if zoom == self.ZOOM_LEVELS[0]:
+            st.image(self.files.page(document_path, page - 1), width="stretch")
+            return
+        # Zoomed pages scroll inside a frame, so the details beside them stay in view.
+        components.html(
+            self.ZOOM_FRAME.format(zoom=zoom, source=self.files.page_uri(document_path, page - 1), page=page),
+            height=self.ZOOM_FRAME_HEIGHT,
+        )
 
     # Name
 
@@ -376,7 +471,6 @@ class DocumentPreviewDialog:
         )
         button_column.button(
             ":material/done_all:",
-            help="Mark reviewed: the details are correct, so clear these flags",
             key=f"review_{keys.name}",
             width="stretch",
             on_click=self._mark_reviewed,
@@ -487,9 +581,7 @@ class DocumentPreviewDialog:
             args=(keys, scalars, original),
             column_config={
                 "Field": st.column_config.TextColumn(width="small"),
-                "Value": st.column_config.TextColumn(
-                    help="Edit a value to correct it; clear it if the document does not show it."
-                ),
+                "Value": st.column_config.TextColumn(),
             },
         )
         if st.session_state.get(keys.details_error):
@@ -510,11 +602,9 @@ class DocumentPreviewDialog:
             index=self.types.keys().index(current) if current in self.types.keys() else 0,
             format_func=self.types.label,
             key=keys.reextract_type,
-            help="Choose another type if this one is wrong, then re-extract the details.",
         )
         if button_column.button(
             ":material/refresh:",
-            help="Re-extract the details as the selected document type",
             key=f"reextract_{keys.name}",
             width="stretch",
         ):

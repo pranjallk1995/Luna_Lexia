@@ -176,7 +176,7 @@ class LunaStyle:
             div[data-testid="stHorizontalBlock"]:has(.lv-favorite-overlay):not(:has(.lv-thumbnail-shell)) div[data-testid="stColumn"]:has(.lv-favorite-active) .stButton > button {
                 color:#fb4b68!important;
             }
-            .lv-card-tags { display:flex; align-items:flex-start; flex-wrap:wrap; gap:.3rem; height:1.7rem; padding:.05rem 0 .15rem; margin:.1rem 0 .3rem; overflow:hidden; }
+            .lv-card-tags { display:flex; align-items:flex-start; flex-wrap:wrap; gap:.3rem; height:1.7rem; padding:.05rem 0 .15rem; margin:.45rem 0 .3rem; overflow:hidden; }
             .lv-tag { flex:0 0 auto; padding:.12rem .48rem; border:1px solid transparent; border-radius:999px; font-size:.68rem; line-height:1.1rem; }
             .lv-tag-0 { color:#93c5fd; background:rgba(37,99,235,.18); border-color:rgba(96,165,250,.22); }
             .lv-tag-1 { color:#6ee7b7; background:rgba(5,150,105,.18); border-color:rgba(52,211,153,.22); }
@@ -184,8 +184,8 @@ class LunaStyle:
             .lv-tag-3 { color:#d8b4fe; background:rgba(147,51,234,.18); border-color:rgba(192,132,252,.22); }
             .lv-tag-4 { color:#fda4af; background:rgba(225,29,72,.18); border-color:rgba(251,113,133,.22); }
             .lv-tag-5 { color:#67e8f9; background:rgba(8,145,178,.18); border-color:rgba(34,211,238,.22); }
-            .lv-card-facts { display:flex; align-items:center; gap:.35rem; margin-bottom:1.5rem; color:var(--lv-muted); font-size:.7rem; white-space:nowrap; }
-            .lv-card-facts { overflow:hidden; }
+            /* Facts wrap onto more lines rather than being cut off at the card's edge. */
+            .lv-card-facts { display:flex; flex-wrap:wrap; align-items:center; gap:.1rem .35rem; margin-bottom:1.5rem; color:var(--lv-muted); font-size:.7rem; }
             .lv-card-facts:has(+ .lv-card-review) { margin-bottom:.4rem; }
             .lv-card-review { margin-bottom:1.5rem; font-size:.7rem; line-height:1.1rem; }
             /* The theme's primary color is near-white, so a switched-on toggle would be a white
@@ -271,9 +271,17 @@ class LunaStyle:
                 padding:.4rem 0!important; margin-bottom:.6rem!important;
             }
             /* Narrow screens (whatever the browser reports): stack the document dialog's
-               preview and details, so the name, title, summary, and tags sit below the page. */
+               preview and details, so the details sit below the page. */
             div[data-testid="stElementContainer"]:has(.lv-preview-pages) { display:none!important; }
-            @media (max-width:768px) {
+            .lv-page-zoom-level { color:var(--lv-muted); font-size:.75rem; text-align:center; white-space:nowrap; }
+            /* Side by side, the page stays in view while the details beside it scroll. */
+            @media (min-width:1025px) {
+                div[data-testid="stHorizontalBlock"]:has(> div[data-testid="stColumn"] .lv-preview-pages) > div[data-testid="stColumn"]:has(.lv-preview-pages) {
+                    position:sticky; top:0; align-self:flex-start;
+                }
+            }
+            /* Below this width the details table is too cramped beside the page. */
+            @media (max-width:1024px) {
                 div[data-testid="stHorizontalBlock"]:has(> div[data-testid="stColumn"] .lv-preview-pages) {
                     flex-direction:column!important; flex-wrap:nowrap!important;
                 }

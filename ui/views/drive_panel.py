@@ -58,7 +58,7 @@ class DriveImportPanel(LexiaTab):
     def _render_account(self, email: str) -> None:
         text_column, button_column = st.columns([8, 1], vertical_alignment="center")
         text_column.caption(f":material/cloud_done: Connected as {email}")
-        if button_column.button(":material/link_off:", help="Disconnect Google Drive", key="drive_disconnect", width="stretch"):
+        if button_column.button(":material/link_off:", key="drive_disconnect", width="stretch"):
             self.api.drive_disconnect()
             st.session_state.pop("drive_root_folders", None)
             st.rerun(scope="fragment")
@@ -97,7 +97,6 @@ class DriveImportPanel(LexiaTab):
         folder = typed or picked
         if button_column.button(
             ":material/cloud_download:",
-            help="Import every PDF, image, Word, and Excel file in this folder",
             key="drive_import",
             disabled=not folder,
             width="stretch",
@@ -112,7 +111,7 @@ class DriveImportPanel(LexiaTab):
     def _render_jobs(self) -> None:
         heading_column, refresh_column = st.columns([8, 1], vertical_alignment="center")
         heading_column.markdown('<div class="lv-preview-heading">Recent imports</div>', unsafe_allow_html=True)
-        refresh_column.button(":material/refresh:", help="Refresh progress", key="drive_jobs_refresh", width="stretch")
+        refresh_column.button(":material/refresh:", key="drive_jobs_refresh", width="stretch")
 
         # Refreshes itself, so progress and elapsed time stay current and new or retried
         # imports appear; reports of finished imports are fetched once (see _report).
@@ -234,7 +233,6 @@ class DriveImportPanel(LexiaTab):
         )
         if button_column.button(
             ":material/lock_open:",
-            help="Retry the locked PDFs with this password",
             key=f"drive_retry_{job['job_id']}",
             disabled=not password,
             width="stretch",

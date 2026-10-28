@@ -56,6 +56,8 @@ class UIConfig:
     # Portrait-ish cards show the top of the first page, where the letterhead is.
     card_size: tuple[int, int] = (420, 300)
     page_preview_edge: int = 1400
+    # Zoomed pages render sharper so small print stays legible at 300%.
+    page_zoom_edge: int = 2400
     gallery_corner_radius: int = 10
     gallery_selection_color: str = "#D4D4D4"
     gallery_border_thickness: int = 4

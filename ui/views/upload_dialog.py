@@ -143,7 +143,6 @@ class UploadDialog(LexiaTab):
             "PDF password (if protected)",
             type="password",
             key="upload_password",
-            help="Indian payslips and statements are often protected with your PAN or date of birth.",
         )
         types = self.context.types
         type_column.selectbox(

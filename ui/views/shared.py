@@ -83,16 +83,14 @@ class LexiaContext:
 
 
 class DocumentLabel:
-    """A single-line, truncated filename with its full value as a tooltip."""
+    """A filename that wraps onto more lines rather than being cut off."""
 
     @staticmethod
     def render(container, stored_name: str) -> None:
         display_name = html.escape(DocumentFiles.display_name(stored_name), quote=True)
         container.markdown(
-            f"""<div title="{display_name}" style="
-                white-space: nowrap;
-                overflow: hidden;
-                text-overflow: ellipsis;
+            f"""<div style="
+                overflow-wrap: anywhere;
                 color: var(--lv-muted);
                 font-size: 0.875rem;
                 line-height: 1.25rem;

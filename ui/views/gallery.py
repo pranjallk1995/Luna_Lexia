@@ -234,8 +234,7 @@ class DocumentGallery:
             f"<span>{html.escape(fact)}</span>" for fact in facts if fact
         )
         review = (
-            '<div class="lv-card-review"><span class="lv-review-flag" '
-            'title="Some extracted details need review">needs review</span></div>'
+            '<div class="lv-card-review"><span class="lv-review-flag">needs review</span></div>'
             if metadata.get("review_flags")
             else ""
         )

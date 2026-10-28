@@ -1,5 +1,7 @@
 """Read-only access to vault document files with cached page rendering."""
 
+import base64
+import io
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -77,6 +79,14 @@ class DocumentFiles:
         del modified_ns
         return render_page(Path(document_path), index, max_edge)
 
+    @staticmethod
+    @st.cache_data(show_spinner=False, max_entries=UIConfig.PREVIEW_CACHE_ENTRIES)
+    def _page_uri(document_path: str, modified_ns: int, index: int, max_edge: int) -> str:
+        del modified_ns
+        buffer = io.BytesIO()
+        render_page(Path(document_path), index, max_edge).save(buffer, "JPEG", quality=85)
+        return f"data:image/jpeg;base64,{base64.b64encode(buffer.getvalue()).decode('ascii')}"
+
     def thumbnail(self, path: Path) -> Image.Image:
         """Return the cached top of the first page, cropped to the card size."""
         return self._thumbnail(str(path), path.stat().st_mtime_ns, self.config.card_size)
@@ -84,6 +94,10 @@ class DocumentFiles:
     def page(self, path: Path, index: int) -> Image.Image:
         """Return one cached, readable page render."""
         return self._page(str(path), path.stat().st_mtime_ns, index, self.config.page_preview_edge)
+
+    def page_uri(self, path: Path, index: int) -> str:
+        """Return one cached, high-resolution page render as a JPEG data URI for zooming."""
+        return self._page_uri(str(path), path.stat().st_mtime_ns, index, self.config.page_zoom_edge)
 
     @staticmethod
     def mime_type(path: Path) -> str:
