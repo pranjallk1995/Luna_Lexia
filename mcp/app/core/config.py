@@ -36,6 +36,11 @@ class AppConfig:
     # Largest page image edge sent to the model, and how much text classification reads.
     MODEL_IMAGE_EDGE: ClassVar[int] = 1600
     CLASSIFY_TEXT_CHARS: ClassVar[int] = 6000
+    # Documents parsed ahead or kept with their rendered page images, for overlapping
+    # Docling with the model calls of the document before.
+    PREPARED_DOCUMENTS: ClassVar[int] = 4
+    # Statement table rows read per model reply; longer tables are read in batches.
+    EXTRACTION_ROWS_PER_CALL: ClassVar[int] = 25
     # Below this classification confidence a document is flagged for review.
     LOW_CONFIDENCE: ClassVar[float] = 0.6
     SEMANTIC_POLL_SECONDS: ClassVar[int] = 10

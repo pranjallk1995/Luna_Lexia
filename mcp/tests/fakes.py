@@ -205,10 +205,14 @@ class FakeAnalyzer:
     """Classify as a payslip (or the hinted type) and extract fixed details, without a model."""
 
     model = "test-model"
+    images_with_text = False
 
     def __init__(self) -> None:
         self.reader = DocumentReader()
         self.extracted = dict(PAYSLIP)
+
+    def page_images(self, data):
+        return []
 
     def classify(self, data, content, hint):
         del data, content

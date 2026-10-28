@@ -26,6 +26,11 @@ class DoclingParser:
     A page Docling returns empty although the PDF has a text layer there gets
     that text layer instead, so a parser miss never loses readable text.
 
+    Docling pads table cells with spaces to align columns, and repeats a merged
+    cell in every column it spans; on a Form 16 that is three quarters of the
+    Markdown. ``compact_tables`` strips both, so the text stays within the
+    model's prompt budget.
+
     The converter loads its layout, table, and OCR models once, on first use,
     on ``device`` (``auto`` picks a CUDA GPU when torch can see one). Conversions
     run one at a time under the PDFium lock, because Docling's PDF backend also
@@ -37,6 +42,8 @@ class DoclingParser:
     # Where the Dockerfile bakes the models; loading from here never contacts the
     # Hugging Face hub, which Docling's layout engine otherwise does on first use.
     IMAGE_PLACEHOLDER = re.compile(r"^\s*<!-- image -->\s*$", re.MULTILINE)
+    SEPARATOR_CELL = re.compile(r"^:?-+:?$")
+    LETTERS = re.compile(r"[A-Za-z]")
 
     def __init__(self, reader: DocumentReader, max_text_chars: int, device: str = "auto") -> None:
         self.reader = reader
@@ -85,9 +92,36 @@ class DoclingParser:
             document = converter.convert(DocumentStream(name=f"document{extension}", stream=BytesIO(data))).document
         page_count = max(len(document.pages), 1)
         return [
-            self.IMAGE_PLACEHOLDER.sub("", document.export_to_markdown(page_no=number)).strip()
+            self.compact_tables(self.IMAGE_PLACEHOLDER.sub("", document.export_to_markdown(page_no=number)).strip())
             for number in range(1, page_count + 1)
         ]
+
+    @classmethod
+    def compact_tables(cls, markdown: str) -> str:
+        """Strip table cell padding, and collapse merged cells repeated across columns.
+
+        A row counts as merged when most of its cells repeat their left
+        neighbour; only text cells are collapsed there, so data rows (where two
+        columns may legitimately hold the same value) keep every column.
+        """
+        lines = []
+        for line in markdown.splitlines():
+            if not line.startswith("|"):
+                lines.append(line)
+                continue
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            if all(cls.SEPARATOR_CELL.fullmatch(cell) for cell in cells):
+                lines.append("|" + "|".join("---" for _ in cells) + "|")
+                continue
+            repeats = sum(1 for left, cell in zip(cells, cells[1:]) if cell == left)
+            if repeats * 2 >= len(cells):
+                cells = [
+                    cell
+                    for index, cell in enumerate(cells)
+                    if index == 0 or cell != cells[index - 1] or not cls.LETTERS.search(cell)
+                ]
+            lines.append("| " + " | ".join(cells) + " |")
+        return "\n".join(lines)
 
     @staticmethod
     def _readable(text: str) -> bool:

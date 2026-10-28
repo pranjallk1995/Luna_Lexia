@@ -247,6 +247,11 @@ class DocumentIndexer:
             chosen.append({"name": path.name, "doc_type": existing["doc_type"] if existing else None, "reason": reason})
         return chosen
 
+    def prefetch(self, name: str) -> None:
+        """Start parsing a stored file that is about to be analyzed again."""
+        path = self.storage.existing_path(name)
+        self.pipeline.prefetch(path.read_bytes())
+
     def reanalyze(self, name: str, doc_type: str | None) -> Row:
         """Analyze one stored file again, keeping ``doc_type`` as the type hint, and save it."""
         data = self.storage.existing_path(name).read_bytes()

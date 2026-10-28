@@ -71,7 +71,10 @@ review.
   files are refused with a request to save them without the password.
 - **Docling** turns PDFs and photos into Markdown page by page, so scans become
   text (RapidOCR) and every page stays citable. If Docling fails, the PDF's own
-  text layer is used so an upload is never lost.
+  text layer is used so an upload is never lost. Docling pads table cells to
+  align columns and repeats merged cells in every column they span; Lexia
+  strips both, which shrank a Form 16 from 152,852 to 23,621 characters, so all
+  its pages now fit in the text the model reads.
 - **Pydantic AI** runs two agents on Luna Sentia's model. A schema violation is
   sent back to the model with the validation errors for another attempt.
   Lexia talks to Ollama's native `/api/chat` endpoint through a small adapter
@@ -282,6 +285,30 @@ A PAN, TAN, GSTIN, or IFSC that does not have its official format is sent back
 to the model once to be re-read; if it is still malformed, the document keeps it
 and is flagged for review.
 
+### Long statements
+
+One reply cannot hold a statement with many rows: a mutual fund capital gains
+report with 88 trades needs about 12,000 tokens, beyond both the reply limit and
+the context. Capital gains, bank, credit card, and tax statements and invoices
+name their row list (`ROWS_FIELD`). When a document has more than
+`EXTRACTION_ROWS_PER_CALL` (25) rows, the summary fields are read from the text
+with the rows left out (plus the page images), then the rows are read 25 at a
+time with their column header and merged. Rows come from Docling's tables or,
+when it finds more of them, from the PDF's text layer, since Docling can merge
+the rows of a dense table while a text layer prints one line per row. Any
+amount the model returns that is not printed in its row (a per-unit gain it
+worked out, say) is cleared, and capital gains statements are flagged when
+their rows do not add up to the printed total (or to short- plus long-term
+gains when no total is printed).
+
+### Overlapping parsing with the model
+
+Ollama runs one Qwen3-VL request at a time, so Lexia keeps the model busy
+instead: re-analysis and bulk imports prepare the next document (download,
+Docling, page images) on a background thread while the current one waits on the
+model (`DocumentPipeline.prefetch`). Drive downloads still run one at a time,
+because the Drive client is not thread-safe.
+
 ### Google Drive import
 
 Drive import reuses the UI's Google OAuth client and needs no settings of its
@@ -297,7 +324,8 @@ Then choose **Upload → Google Drive → Connect Google Drive**. Changing
 
 Drive folder imports and bulk uploads become background jobs in
 `mcp/app/services/imports.py`, run one at a time because Docling and the model
-share the GPU. Each file is inspected (skipped if it was imported before and is
+share the GPU (the next file is downloaded and parsed while the current one is
+analyzed; see [Overlapping parsing with the model](#overlapping-parsing-with-the-model)). Each file is inspected (skipped if it was imported before and is
 unchanged, or is not a PDF, image, or Word or Excel file), downloaded, uploaded through the normal
 analysis pipeline, and recorded in `import_items` with its outcome and its
 position in the job.

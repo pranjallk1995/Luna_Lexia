@@ -21,6 +21,7 @@ import logging
 import queue
 import threading
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict
 from typing import Any
 
@@ -37,27 +38,41 @@ SOURCES = ("drive_file_id", "document_url", "content_base64", "file")
 
 
 class FileImporter:
-    """Import one file into Lexia and record its outcome."""
+    """Import one file into Lexia and record its outcome.
+
+    Once an item is downloaded, the next one (``upcoming``) is downloaded and
+    parsed on a background thread, so its Drive download and Docling pass overlap
+    this item's model calls. Downloads never run at the same time, because the
+    Drive client is not thread-safe: the next one starts after this one ends, and
+    ``run`` waits for a pending one before using Drive itself.
+    """
 
     def __init__(self, visible, sources: DocumentSourceResolver, imports: ImportRepository) -> None:
         self.visible = visible
         self.sources = sources
         self.imports = imports
+        self._ahead: dict[tuple[str, int | None], Future] = {}
+        self._fetcher = ThreadPoolExecutor(1, thread_name_prefix="lexia-import-ahead")
 
-    def run(self, item: dict[str, Any], job_id: str, drive: DriveClient | None) -> str:
-        """Import one item; return its outcome."""
+    def run(
+        self, item: dict[str, Any], job_id: str, drive: DriveClient | None, upcoming: dict[str, Any] | None = None
+    ) -> str:
+        """Import one item, fetching ``upcoming`` ahead; return the item's outcome."""
+        fetched = self._fetched(job_id, item.get("position"))
         file, name = None, item.get("name") or item.get("drive_file_id") or ""
         try:
             if item.get("drive_file") or item.get("drive_file_id"):
                 if drive is None:
                     raise ImportSkipped("failed", "Google Drive is not connected.")
-                file = DriveFile(**item["drive_file"]) if item.get("drive_file") else drive.file(item["drive_file_id"])
+                file = self.drive_file(item, drive)
                 name = item.get("name") or file.upload_name
                 if not file.importable:
                     raise ImportSkipped("unsupported", f"{file.mime_type} files are not imported; Lexia stores PDFs, images, and Word and Excel files.")
                 if not item.get("password") and self.imports.already_imported("drive", file.file_id, file.version):
                     raise ImportSkipped("skipped")
-            data, name = self.download(item, file, drive, name)
+            data, name = fetched or self.download(item, file, drive, name)
+            if upcoming is not None:
+                self._ahead[(job_id, upcoming.get("position"))] = self._fetcher.submit(self.fetch_ahead, upcoming, drive)
             outcome, document_name, error = *self.upload(item, name, data), None
         except ImportSkipped as stop:
             outcome, document_name, error = stop.outcome, None, stop.error
@@ -76,6 +91,34 @@ class FileImporter:
             },
         )
         return outcome
+
+    @staticmethod
+    def drive_file(item: dict[str, Any], drive: DriveClient) -> DriveFile:
+        return DriveFile(**item["drive_file"]) if item.get("drive_file") else drive.file(item["drive_file_id"])
+
+    def fetch_ahead(self, item: dict[str, Any], drive: DriveClient | None) -> tuple[bytes, str] | None:
+        """Download an upcoming item and start parsing it; None when it will not be imported."""
+        file = None
+        if item.get("drive_file") or item.get("drive_file_id"):
+            if drive is None:
+                return None
+            file = self.drive_file(item, drive)
+            if not file.importable or (
+                not item.get("password") and self.imports.already_imported("drive", file.file_id, file.version)
+            ):
+                return None
+        name = item.get("name") or (file.upload_name if file else item.get("drive_file_id") or "")
+        data, name = self.download(item, file, drive, name)
+        self.visible.indexer.pipeline.prefetch(data)
+        return data, name
+
+    def _fetched(self, job_id: str, position: int | None) -> tuple[bytes, str] | None:
+        """Wait for this item's download ahead, if one was started; None if it failed or was skipped."""
+        pending = self._ahead.pop((job_id, position), None)
+        try:
+            return pending.result() if pending else None
+        except Exception:  # noqa: BLE001 - downloaded again in the foreground, which reports the error
+            return None
 
     def download(self, item: dict[str, Any], file: DriveFile | None, drive, name: str) -> tuple[bytes, str]:
         try:
@@ -182,8 +225,9 @@ class ImportJobs:
             if self.imports.item_recorded(job_id, position):
                 continue
             self.imports.update_job(job_id, current_item=self.item_name(item))
+            upcoming = {**items[position + 1], "position": position + 1} if position + 1 < len(items) else None
             try:
-                self.files.run({**item, "position": position}, job_id, drive)
+                self.files.run({**item, "position": position}, job_id, drive, upcoming)
             except Exception as error:  # noqa: BLE001 - one bad file never stops the job
                 logger.exception("Import item failed")
                 self.imports.record_item(job_id, {"source": "unknown", "name": str(item.get("name") or "?"),

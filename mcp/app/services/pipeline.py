@@ -5,10 +5,18 @@ type's extraction agent fills the schema from the parsed text. When that fails,
 or no text could be read, extraction is tried once more from page images.
 Validation then turns business-rule failures into review flags, and tagging adds
 the type, financial-year, and needs-review tags.
+
+Parsing and rendering page images (Docling and PDFium, on the GPU and CPU) are
+independent of the model calls (on Luna Sentia's Ollama), so a caller working
+through many documents can ``prefetch`` the next one: it is prepared on a
+background thread while the current one waits on the model.
 """
 
 from __future__ import annotations
 
+import hashlib
+import threading
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import replace
 
 from app.core.models import DocumentAnalysis, DocumentClassification, DocumentContent, MetadataRules
@@ -29,11 +37,34 @@ class DocumentPipeline:
         self.parser = parser
         self.analyzer = analyzer
         self.rules = rules
+        self._prepared: dict[str, Future] = {}
+        self._prepared_lock = threading.Lock()
+        self._preparer = ThreadPoolExecutor(1, thread_name_prefix="lexia-prepare")
+
+    def prepare(self, data: bytes) -> DocumentContent:
+        """Parse the document and render the page images the model will see."""
+        content = self.parser.parse(data, self.analyzer.reader.file_format(data))
+        if self.analyzer.images_with_text or not content.has_text:
+            self.analyzer.page_images(data)
+        return content
+
+    def prefetch(self, data: bytes) -> None:
+        """Start preparing a document that ``run`` will be called with next."""
+        key = hashlib.sha256(data).hexdigest()
+        with self._prepared_lock:
+            if key in self._prepared:
+                return
+            self._prepared[key] = self._preparer.submit(self.prepare, data)
+            # A prefetched document that never runs (a duplicate, a failed upload) is dropped.
+            while len(self._prepared) > AppConfig.PREPARED_DOCUMENTS:
+                self._prepared.pop(next(iter(self._prepared)))
 
     def run(self, data: bytes, doc_type: str | None = None) -> tuple[DocumentAnalysis, DocumentContent]:
         """Analyze document bytes; ``doc_type`` overrides the classification when known."""
         hint = document_type(doc_type) if doc_type else None
-        content = self.parser.parse(data, self.analyzer.reader.file_format(data))
+        with self._prepared_lock:
+            prepared = self._prepared.pop(hashlib.sha256(data).hexdigest(), None)
+        content = prepared.result() if prepared else self.prepare(data)
         classification = self.analyzer.classify(data, content, hint)
         kind = hint or document_type(classification.doc_type)
         errors: list[str] = []

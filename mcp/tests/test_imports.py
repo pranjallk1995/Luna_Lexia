@@ -414,7 +414,7 @@ class FailingFileImporter:
     def __init__(self, files: FileImporter, failing: set[str]) -> None:
         self.files, self.failing = files, failing
 
-    def run(self, item, job_id, drive):
+    def run(self, item, job_id, drive, upcoming=None):
         name = item.get("name") or (item.get("drive_file") or {}).get("name")
         if name in self.failing:
             self.failing.discard(name)
@@ -423,7 +423,7 @@ class FailingFileImporter:
                          "position": item.get("position")},
             )
             return "failed"
-        return self.files.run(item, job_id, drive)
+        return self.files.run(item, job_id, drive, upcoming)
 
 
 class RetryAndProgressTests(ImportTestCase):
@@ -484,9 +484,9 @@ class RetryAndProgressTests(ImportTestCase):
         files = self.imports.jobs.files
 
         class Watching:
-            def run(inner, item, job_id, drive):
+            def run(inner, item, job_id, drive, upcoming=None):
                 seen.append(self.imports_repo.jobs_by_id[job_id].get("current_item"))
-                return files.run(item, job_id, drive)
+                return files.run(item, job_id, drive, upcoming)
 
         self.imports.jobs.files = Watching()
         job = self.batch()

@@ -269,6 +269,9 @@ class ExtractedDetails(BaseModel):
     # Whether a missing key amount is a review flag, or just absent for many such documents.
     AMOUNT_REQUIRED: ClassVar[bool] = True
     TRACKS_FINANCIAL_YEAR: ClassVar[bool] = True
+    # The list field holding a statement's table rows (transactions, trades); long
+    # tables fill it in batches, since one reply cannot hold every row.
+    ROWS_FIELD: ClassVar[str | None] = None
 
     def reference_date(self) -> date | None:
         return next(
@@ -509,6 +512,7 @@ class TDSEntry(Item):
 
 
 class TaxStatement(ExtractedDetails):
+    ROWS_FIELD = "tds_entries"
     DATE_FIELDS = ("statement_date",)
     AMOUNT_FIELD = "total_tds"
 
@@ -582,6 +586,7 @@ class BankTransaction(Item):
 
 
 class BankStatement(ExtractedDetails):
+    ROWS_FIELD = "transactions"
     ISSUER_FIELD = "bank_name"
     DATE_FIELDS = ("statement_to", "statement_from")
     AMOUNT_FIELD = "closing_balance"
@@ -644,6 +649,7 @@ class CardTransaction(Item):
 
 
 class CreditCardStatement(ExtractedDetails):
+    ROWS_FIELD = "transactions"
     ISSUER_FIELD = "issuer"
     DATE_FIELDS = ("statement_date", "billing_period_to")
     AMOUNT_FIELD = "total_amount_due"
@@ -688,6 +694,7 @@ class InvoiceItem(Item):
 
 
 class Invoice(ExtractedDetails):
+    ROWS_FIELD = "line_items"
     ISSUER_FIELD = "vendor_name"
     DATE_FIELDS = ("invoice_date", "billing_period_to")
     AMOUNT_FIELD = "total_amount"
@@ -854,6 +861,7 @@ class CapitalGainEntry(Item):
 
 
 class CapitalGainsStatement(ExtractedDetails):
+    ROWS_FIELD = "entries"
     ISSUER_FIELD = "provider_name"
     DATE_FIELDS = ("statement_to",)
     AMOUNT_FIELD = "total_gain"
@@ -871,10 +879,19 @@ class CapitalGainsStatement(ExtractedDetails):
     entries: list[CapitalGainEntry] = Field(default_factory=list, max_length=100)
 
     def rules(self) -> list[str]:
+        flags = []
         short, long, total = self.short_term_gain, self.long_term_gain, self.total_gain
         if None not in (short, long, total) and not close(short + long, total):
-            return [f"Short- and long-term gains add up to {money(short + long)}, not the total {money(total)}."]
-        return []
+            flags.append(f"Short- and long-term gains add up to {money(short + long)}, not the total {money(total)}.")
+        # Statements often print only the short- and long-term totals.
+        expected = total if total is not None else short + long if None not in (short, long) else None
+        gains = amount_total(self.entries, "gain")
+        if self.entries and expected is not None and not close(gains or 0.0, expected):
+            flags.append(
+                f"The gains of the {len(self.entries)} transactions add up to {money(gains or 0.0)}, "
+                f"not the total {money(expected)}; some rows may be missing or misread."
+            )
+        return flags
 
 
 class IdentityDocument(ExtractedDetails):

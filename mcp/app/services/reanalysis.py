@@ -71,13 +71,22 @@ class Reanalysis:
             return self.status()
 
     def run(self, selected: list[dict[str, Any]]) -> None:
-        """Analyze each selected document; a failure is recorded and the run continues."""
+        """Analyze each selected document; a failure is recorded and the run continues.
+
+        Each document and the one after it are queued for parsing, so the next
+        one's Docling pass overlaps this one's model calls.
+        """
         progress = self._progress
-        for item in selected:
+        for index, item in enumerate(selected):
             if self._stop.is_set():
                 progress["state"] = "stopped"
                 break
             progress["current"] = item["name"]
+            for upcoming in selected[index : index + 2]:
+                try:
+                    self.indexer.prefetch(upcoming["name"])
+                except Exception:  # noqa: BLE001 - reanalyze reports a missing or unreadable file
+                    pass
             try:
                 row = self.indexer.reanalyze(item["name"], item["doc_type"])
             except Exception as error:  # noqa: BLE001 - one bad file must not end the run
