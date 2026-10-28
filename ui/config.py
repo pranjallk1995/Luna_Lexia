@@ -14,7 +14,8 @@ class UIConfig:
     UI_ROOT: ClassVar[Path] = Path(__file__).resolve().parent
     LOGO_PATH: ClassVar[Path] = UI_ROOT / "assets" / "lunalexia_logo.png"
     MAX_TAGS: ClassVar[int] = 32
-    UPLOAD_TYPES: ClassVar[tuple[str, ...]] = ("pdf", "png", "jpg", "jpeg", "webp")
+    # Word and Excel files are converted to PDF by the backend and stored as PDFs.
+    UPLOAD_TYPES: ClassVar[tuple[str, ...]] = ("pdf", "png", "jpg", "jpeg", "webp", "docx", "doc", "xlsx", "xls")
 
     document_dir: Path
     api_url: str

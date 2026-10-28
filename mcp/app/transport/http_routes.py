@@ -357,6 +357,9 @@ class LexiaHTTPRoutes:
         async def job(request: Request):
             return imports.job(request.path_params["job_id"])
 
+        async def retry(request: Request):
+            return await anyio.to_thread.run_sync(imports.retry, request.path_params["job_id"])
+
         self.route("GET", "/api/drive/status", status)
         self.route("GET", "/api/drive/authorization-url", authorization_url)
         self.route("GET", "/api/drive/callback", callback, protected=False)
@@ -366,6 +369,7 @@ class LexiaHTTPRoutes:
         self.route("POST", "/api/imports/batch", batch, 201)
         self.route("GET", "/api/imports", jobs)
         self.route("GET", "/api/imports/{job_id}", job)
+        self.route("POST", "/api/imports/{job_id}/retry", retry, 201)
 
     def _register_hidden_documents(self) -> None:
         hidden = self.service.hidden

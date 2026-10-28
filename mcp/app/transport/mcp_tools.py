@@ -508,12 +508,12 @@ class LexiaMCPTools:
         async def import_drive_folder(
             folder: str, recursive: bool = True, doc_type: DocTypeName | None = None
         ) -> dict[str, Any]:
-            """Import every PDF and image in a Google Drive folder into Lexia, as a background job.
+            """Import every PDF, image, Word, and Excel file in a Google Drive folder into Lexia, as a background job.
 
             folder is a folder link, ID, or exact name (if several folders share
             the name, the error lists their IDs to choose from). Subfolders are
-            included unless recursive=false; Google Docs, Sheets, and Slides are
-            imported as PDFs. Files already imported unchanged are skipped, so
+            included unless recursive=false; Google Docs, Sheets, and Slides, and
+            Word and Excel files, are imported as PDFs. Files already imported unchanged are skipped, so
             re-running a folder only adds what is new. Returns a job; follow its
             progress with get_import_job. Each document takes about 20-40 seconds.
             """
@@ -543,9 +543,24 @@ class LexiaMCPTools:
             off resumes by itself at the file it was on. outcomes counts imported, duplicate (already in Lexia),
             skipped (imported before, unchanged), needs_password, unsupported,
             and failed files; each file lists its name, Drive path, outcome, the
-            Lexia document_name it became, and any error.
+            Lexia document_name it became, and any error. While running,
+            current_item is the file being imported and current_started_at when
+            it started. retryable says whether retry_import_job has anything to retry.
             """
             return await offload(imports.job, job_id, include_files)
+
+        @server.tool()
+        async def retry_import_job(job_id: str) -> dict[str, Any]:
+            """Retry a finished import job's failed files as a new background job.
+
+            Failed files (for example ones the model was unavailable for) are
+            queued again with their original type and password; a folder import
+            whose listing failed lists the folder again. Locked PDFs
+            (needs_password) are not retried here: pass their drive_file_id and
+            password to upload_documents. A job can be retried once; retry the
+            new job if files fail again. Follow the new job with get_import_job.
+            """
+            return await offload(imports.retry, job_id)
 
         @server.tool()
         async def list_import_jobs(limit: int = 10) -> dict[str, Any]:
@@ -580,7 +595,7 @@ class LexiaMCPTools:
             password: str | None = None,
             doc_type: DocTypeName | None = None,
         ) -> dict[str, Any]:
-            """Add a PDF or a photo/scan (PNG, JPEG, WebP) to Luna Lexia.
+            """Add a PDF, a photo/scan (PNG, JPEG, WebP), or a Word or Excel file to Luna Lexia.
 
             The document is parsed (with OCR for scans), classified (payslip,
             Form 16, bank statement...), and its type's details are extracted
@@ -594,6 +609,8 @@ class LexiaMCPTools:
 
             password unlocks a protected PDF, which is then stored unlocked; ask
             the user for it if the upload reports that the PDF is protected.
+            Word (DOCX, DOC) and Excel (XLSX, XLS) files are converted to a PDF,
+            one page per sheet, and stored under the same name with .pdf.
             doc_type skips guessing when the type is known. name is optional: the
             extension is corrected to match the format, a taken name gets a
             numeric suffix, and an exact duplicate returns status "duplicate".

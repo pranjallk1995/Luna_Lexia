@@ -6,9 +6,10 @@ imported file is recorded with its position in that list. A job a restart cut
 off therefore resumes by itself: it skips every recorded position and starts
 over only the file that was in progress, without listing the folder again.
 
-Each file is inspected (skipped if imported before unchanged, or not a PDF or
-image), downloaded, uploaded through Lexia's normal upload (so it goes through
-the analysis pipeline, duplicate detection, and PDF unlocking), and recorded. A
+Each file is inspected (skipped if imported before unchanged, or not a PDF,
+image, or Word or Excel file), downloaded, uploaded through Lexia's normal
+upload (so it goes through the analysis pipeline, duplicate detection, PDF
+unlocking, and Word and Excel conversion), and recorded. A
 password-protected PDF is recorded as ``needs_password`` so it can be retried
 with its password. Jobs run one at a time on a background worker, because each
 file takes seconds of model time and a folder can hold dozens.
@@ -53,7 +54,7 @@ class FileImporter:
                 file = DriveFile(**item["drive_file"]) if item.get("drive_file") else drive.file(item["drive_file_id"])
                 name = item.get("name") or file.upload_name
                 if not file.importable:
-                    raise ImportSkipped("unsupported", f"{file.mime_type} files are not imported; Lexia stores PDFs and images.")
+                    raise ImportSkipped("unsupported", f"{file.mime_type} files are not imported; Lexia stores PDFs, images, and Word and Excel files.")
                 if not item.get("password") and self.imports.already_imported("drive", file.file_id, file.version):
                     raise ImportSkipped("skipped")
             data, name = self.download(item, file, drive, name)
@@ -165,10 +166,14 @@ class ImportJobs:
         if "items" not in request:
             self.imports.update_job(job_id, status="listing", started=True)
             try:
-                request = {"items": self.plan(request, drive)}
+                listed = {"items": self.plan(request, drive)}
             except Exception as error:  # noqa: BLE001 - recorded on the job
-                self.imports.update_job(job_id, status="failed", error=str(error)[:1000], request=None, finished=True)
+                # Kept so a retry can list the folder again.
+                self.imports.update_job(
+                    job_id, status="failed", error=str(error)[:1000], request={"rerun": request}, finished=True
+                )
                 return
+            request = listed
             # The listed files replace the request, so a resume never lists the folder again.
             self.imports.update_job(job_id, request=request)
         items = request["items"]
@@ -176,15 +181,38 @@ class ImportJobs:
         for position, item in enumerate(items):
             if self.imports.item_recorded(job_id, position):
                 continue
-            item = {**item, "position": position}
+            self.imports.update_job(job_id, current_item=self.item_name(item))
             try:
-                self.files.run(item, job_id, drive)
+                self.files.run({**item, "position": position}, job_id, drive)
             except Exception as error:  # noqa: BLE001 - one bad file never stops the job
                 logger.exception("Import item failed")
                 self.imports.record_item(job_id, {"source": "unknown", "name": str(item.get("name") or "?"),
                                                   "outcome": "failed", "error": str(error)[:500], "position": position})
-        # The request may hold Base64 uploads; it is not needed once the job is over.
-        self.imports.update_job(job_id, status="done", request=None, finished=True)
+        # The request may hold Base64 uploads, so only the failed files' items are
+        # kept, for a retry.
+        failed = [
+            items[row["position"]]
+            for row in self.imports.items(job_id)
+            if row["outcome"] == "failed" and row.get("position") is not None and row["position"] < len(items)
+        ]
+        self.imports.update_job(
+            job_id, status="done", current_item=None, request={"retry": failed} if failed else None, finished=True
+        )
+
+    @staticmethod
+    def item_name(item: dict[str, Any]) -> str:
+        """What to call an item while it is being imported."""
+        drive_file = item.get("drive_file") or {}
+        file = item.get("file") or {}
+        return str(
+            item.get("name")
+            or f"{drive_file.get('path') or ''}{drive_file.get('name') or ''}"
+            or file.get("file_name")
+            or file.get("name")
+            or item.get("document_url")
+            or item.get("drive_file_id")
+            or "upload"
+        )[:300]
 
     @staticmethod
     def plan(request: dict[str, Any], drive: DriveClient | None) -> list[dict[str, Any]]:
@@ -299,9 +327,50 @@ class ImportService:
         job = self.imports.job(job_id)
         if job is None:
             raise FileNotFoundError(f"No import job has ID {job_id}.")
+        job["retryable"] = self._retry_request(job) is not None
         if include_items:
             job["items"] = self.imports.items(job_id)
         return job
 
     def jobs_list(self, limit: int = 20) -> list[Row]:
-        return self.imports.jobs(max(1, min(limit, 100)))
+        jobs = self.imports.jobs(max(1, min(limit, 100)))
+        for job in jobs:
+            job["retryable"] = self._retry_request(job) is not None
+        return jobs
+
+    def _retry_request(self, job: Row) -> dict[str, Any] | None:
+        """What retrying a finished job queues: its failed files, or a folder whose listing failed.
+
+        Jobs from before failed items were kept fall back to their recorded
+        Drive files and URLs. A job that was already retried has nothing left.
+        """
+        if job["status"] not in ("done", "failed"):
+            return None
+        request = self.imports.job_request(str(job["job_id"])) or {}
+        if "retried" in request:
+            return None
+        if "rerun" in request:
+            return request["rerun"]
+        if job["status"] == "failed" and "items" in request:
+            return request  # an unexpected error stopped it; files already imported come back as duplicates
+        items = request.get("retry") or [
+            {"drive_file_id": row["source_id"]} if row["source"] == "drive" else {"document_url": row["source_id"]}
+            for row in self.imports.items(str(job["job_id"]))
+            if row["outcome"] == "failed" and row["source"] in ("drive", "url") and row.get("source_id")
+        ]
+        return {"items": items} if items else None
+
+    def retry(self, job_id: str) -> Row:
+        """Queue a finished job's failed files (or its whole folder, if listing it failed) as a new job."""
+        job = self.job(job_id, include_items=False)
+        request = self._retry_request(job)
+        if request is None:
+            if job["status"] not in ("done", "failed"):
+                raise ValueError("This import is still running; retry it once it has finished.")
+            raise ValueError("This import has no failed files to retry, or was already retried.")
+        if any(item.get("drive_file_id") or item.get("drive_file") for item in request.get("items", [])):
+            self.drive()
+        source = f"Retry of {job['source'].removeprefix('Retry of ')}"
+        retry = self.jobs.submit(job["kind"], source, request)
+        self.imports.update_job(job_id, request={"retried": str(retry["job_id"])})
+        return retry

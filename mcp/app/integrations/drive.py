@@ -19,7 +19,19 @@ EXPORT_AS_PDF = frozenset(
         "application/vnd.google-apps.presentation",
     }
 )
-DOWNLOADABLE = frozenset({"application/pdf", "image/png", "image/jpeg", "image/webp"})
+DOWNLOADABLE = frozenset(
+    {
+        "application/pdf",
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        # Word and Excel files, which Lexia converts to PDF.
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel",
+    }
+)
 FILE_FIELDS = "id, name, mimeType, md5Checksum, size, modifiedTime"
 FOLDER_LINK = re.compile(r"/folders/([A-Za-z0-9_-]{10,})")
 DRIVE_ID = re.compile(r"[A-Za-z0-9_-]{25,}")

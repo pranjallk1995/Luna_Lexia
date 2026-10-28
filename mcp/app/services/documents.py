@@ -20,6 +20,9 @@ from PIL import ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
 # PDFium is not thread-safe, and tools run in worker threads, so every call is serialized.
 PDFIUM_LOCK = threading.RLock()
 PDF_SIGNATURE = b"%PDF-"
+ZIP_SIGNATURE = b"PK\x03\x04"
+# Legacy Word and Excel files, and password-protected modern ones, are OLE compound files.
+OLE_SIGNATURE = bytes.fromhex("D0CF11E0A1B11AE1")
 
 
 @contextmanager
@@ -43,9 +46,18 @@ class DocumentPayloadDecoder:
 
     Base64 from LLM clients is often line-wrapped, unpadded, URL-safe, or a
     ``data:`` URL, so all of those are normalized before decoding.
+
+    Word and Excel files are converted to PDF by ``converter`` and stored as
+    that PDF, with a ``.pdf`` name.
     """
 
     FORMAT_EXTENSIONS = {"PDF": ".pdf", "JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp"}
+    OFFICE_EXTENSIONS = {".docx": "DOCX", ".doc": "DOC", ".xlsx": "XLSX", ".xls": "XLS"}
+    OFFICE_MESSAGE = "Word and Excel files are not supported on this server."
+    PROTECTED_OFFICE_MESSAGE = (
+        "This Word or Excel file is password-protected. Save a copy without the password, "
+        "or as a PDF, and upload that."
+    )
     # Phone cameras write multi-picture JPEGs, which Pillow reports as MPO.
     FORMAT_ALIASES = {"MPO": "JPEG"}
     DEFAULT_STEM = "document"
@@ -54,9 +66,10 @@ class DocumentPayloadDecoder:
         "statements often use the PAN, date of birth, or a combination of both)."
     )
 
-    def __init__(self, allowed_formats: dict[str, str], max_document_bytes: int) -> None:
+    def __init__(self, allowed_formats: dict[str, str], max_document_bytes: int, converter=None) -> None:
         self.allowed_formats = allowed_formats
         self.max_document_bytes = max_document_bytes
+        self.converter = converter
 
     @property
     def max_base64_chars(self) -> int:
@@ -80,23 +93,58 @@ class DocumentPayloadDecoder:
         except (binascii.Error, ValueError) as error:
             raise ValueError("content_base64 must be valid base64 data.") from error
 
+    @classmethod
+    def office_format(cls, data: bytes) -> str | None:
+        """Return ``DOCX``, ``DOC``, ``XLSX``, or ``XLS`` for Word and Excel bytes, else None."""
+        if data.startswith(ZIP_SIGNATURE):
+            try:
+                with zipfile.ZipFile(BytesIO(data)) as archive:
+                    names = set(archive.namelist())
+            except zipfile.BadZipFile:
+                return None
+            return "DOCX" if "word/document.xml" in names else "XLSX" if "xl/workbook.xml" in names else None
+        if data.startswith(OLE_SIGNATURE):
+            if "EncryptedPackage".encode("utf-16-le") in data:
+                raise ValueError(cls.PROTECTED_OFFICE_MESSAGE)
+            if "WordDocument".encode("utf-16-le") in data:
+                return "DOC"
+            if "Workbook".encode("utf-16-le") in data or "Book".encode("utf-16-le") in data:
+                return "XLS"
+        return None
+
     def detect_format(self, data: bytes) -> str:
-        """Return ``PDF`` or the Pillow format of valid, bounded, supported bytes."""
+        """Return ``PDF``, a Word or Excel format, or the Pillow format of valid, bounded, supported bytes."""
         if not data or len(data) > self.max_document_bytes:
             raise ValueError("Document content is empty or exceeds the 50 MiB limit.")
         if is_pdf(data):
             return "PDF"
+        office = self.office_format(data)
+        if office:
+            return office
         try:
             with PillowImage.open(BytesIO(data)) as image:
                 detected = image.format
                 image.verify()
         except (UnidentifiedImageError, OSError) as error:
-            raise ValueError("Content is not a PDF or a supported image.") from error
+            raise ValueError("Content is not a PDF, Word or Excel file, or supported image.") from error
         detected = self.FORMAT_ALIASES.get(detected, detected)
         if detected not in self.FORMAT_EXTENSIONS:
-            supported = ", ".join(self.FORMAT_EXTENSIONS)
+            supported = ", ".join([*self.FORMAT_EXTENSIONS, "DOCX", "DOC", "XLSX", "XLS"])
             raise ValueError(f"{detected} files are not supported; use {supported}.")
         return detected
+
+    def convert(self, data: bytes, detected: str) -> tuple[bytes, str]:
+        """Turn Word and Excel bytes into PDF bytes; return other formats unchanged."""
+        if detected not in self.OFFICE_EXTENSIONS.values():
+            return data, detected
+        if self.converter is None:
+            raise ValueError(self.OFFICE_MESSAGE)
+        return self.converter.to_pdf(data, detected), "PDF"
+
+    def stored_name(self, name: str) -> str:
+        """Give a Word or Excel filename the ``.pdf`` extension it is stored under."""
+        path = Path(name)
+        return str(path.with_suffix(".pdf")) if path.suffix.lower() in self.OFFICE_EXTENSIONS else name
 
     def unlock(self, data: bytes, password: str | None = None) -> bytes:
         """Return PDF bytes that open without a password, verifying the PDF on the way.
@@ -123,7 +171,7 @@ class DocumentPayloadDecoder:
 
     def prepare(self, name: str, data: bytes, password: str | None = None) -> bytes:
         """Require ``data`` to match ``name``'s format; return the bytes to store."""
-        detected = self.detect_format(data)
+        data, detected = self.convert(data, self.detect_format(data))
         expected = self.allowed_formats[Path(name).suffix.lower()]
         if detected != expected:
             raise ValueError(f"Document content is {detected}, filename expects {expected}.")
@@ -137,7 +185,7 @@ class DocumentPayloadDecoder:
         """
         name = Path((requested or "").strip().replace("\\", "/")).name
         stem, suffix = Path(name).stem, Path(name).suffix.lower()
-        if suffix not in self.allowed_formats:
+        if suffix not in self.allowed_formats and suffix not in self.OFFICE_EXTENSIONS:
             stem = name
         stem = stem.strip().lstrip(".")
         if not stem:

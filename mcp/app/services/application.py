@@ -29,6 +29,7 @@ from app.core.schemas import (
 from app.data.repositories import DocumentRepository, PublicURLRepository, Row
 from app.data.storage import DocumentStorage
 from app.integrations.extraction import DocumentAnalyzer
+from app.integrations.office import OfficeConverter
 from app.integrations.parsing import DoclingParser
 from app.services.documents import DocumentPayloadDecoder, PreviewRenderer
 from app.services.pipeline import DocumentPipeline
@@ -446,8 +447,10 @@ class VisibleDocumentService(DocumentCollectionService):
     ) -> Row:
         """Create or replace a document and persist its analysis.
 
-        A password-protected PDF is stored unlocked so it can be re-read later.
+        A password-protected PDF is stored unlocked so it can be re-read later,
+        and a Word or Excel file is stored as a PDF under ``name`` with ``.pdf``.
         """
+        name = self.decoder.stored_name(name)
         path = self.storage.path(name)
         if doc_type:
             document_type(doc_type)
@@ -476,7 +479,7 @@ class VisibleDocumentService(DocumentCollectionService):
         suffix, and bytes identical to a visible document are reported as a
         duplicate rather than stored twice (LLM clients often retry uploads).
         """
-        detected = self.decoder.detect_format(data)
+        data, detected = self.decoder.convert(data, self.decoder.detect_format(data))
         if detected == "PDF":
             data = self.decoder.unlock(data, password)
         duplicate = self.documents.find_visible_by_content(hashlib.sha256(data).hexdigest())
@@ -993,7 +996,7 @@ class LexiaService:
             documents,
             rules,
             indexer,
-            DocumentPayloadDecoder(config.allowed_formats, config.max_document_bytes),
+            DocumentPayloadDecoder(config.allowed_formats, config.max_document_bytes, OfficeConverter()),
             config.max_fetch_documents,
         )
         return cls(

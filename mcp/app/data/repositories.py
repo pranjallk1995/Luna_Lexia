@@ -373,13 +373,19 @@ class ImportRepository(Repository):
         ) is not None
 
     def update_job(self, job_id: str, **fields: Any) -> None:
-        """Set job columns; ``started`` stamps the first start and ``finished`` the end."""
+        """Set job columns; ``started`` stamps the first start and ``finished`` the end.
+
+        Setting ``current_item`` also stamps when that file started (or clears it with None).
+        """
         assignments, params = [], []
         for name, value in fields.items():
             if name == "started":
                 assignments.append("started_at = coalesce(started_at, now())")
             elif name == "finished":
                 assignments.append("finished_at = now()")
+            elif name == "current_item":
+                assignments.append("current_item = %s, current_started_at = CASE WHEN %s::text IS NULL THEN NULL ELSE now() END")
+                params.extend([value, value])
             else:
                 assignments.append(f"{name} = %s")
                 params.append(Jsonb(value) if isinstance(value, dict) else value)
@@ -390,7 +396,7 @@ class ImportRepository(Repository):
 
     # Each job with how many files it has processed and a count per outcome.
     _JOB_SELECT = """SELECT j.job_id, j.kind, j.source, j.status, j.total, j.error,
-            j.created_at, j.started_at, j.finished_at,
+            j.created_at, j.started_at, j.finished_at, j.current_item, j.current_started_at,
             (SELECT count(*) FROM import_items i WHERE i.job_id = j.job_id) AS processed,
             coalesce((SELECT jsonb_object_agg(outcome, n) FROM (
                 SELECT outcome, count(*) AS n FROM import_items i
@@ -405,7 +411,7 @@ class ImportRepository(Repository):
 
     def items(self, job_id: str) -> list[Row]:
         return self.fetch_all(
-            """SELECT source, source_id, name, path, outcome, document_name, error, created_at
+            """SELECT source, source_id, name, path, outcome, document_name, error, created_at, position
                FROM import_items WHERE job_id::text = %s ORDER BY item_id""",
             (job_id,),
         )

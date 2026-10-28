@@ -1,8 +1,10 @@
 """In-memory test doubles for Luna Lexia repositories, parsing, and analysis."""
 
 import base64
+import hashlib
 import json
 import sys
+import zipfile
 from dataclasses import asdict
 from io import BytesIO
 from pathlib import Path
@@ -293,3 +295,79 @@ def image_bytes(image_format="PNG", color="white", size=(40, 60)):
 
 def payslip_details(**changes) -> Payslip:
     return Payslip.model_validate({**PAYSLIP, **changes})
+
+
+def docx_bytes(text: str = "Offer letter for Asha Rao") -> bytes:
+    """A minimal Word document with one paragraph."""
+    body = (
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f"<w:body><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:body></w:document>"
+    )
+    return _ooxml(
+        "word/document.xml",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+        body,
+    )
+
+
+def xlsx_bytes(columns: int = 30, rows: int = 40) -> bytes:
+    """A minimal one-sheet workbook of numbers, wider than a printed page."""
+    main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    relationships = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    cells = "".join(
+        f'<row r="{row}">' + "".join(f"<c><v>{row * column}</v></c>" for column in range(1, columns + 1)) + "</row>"
+        for row in range(1, rows + 1)
+    )
+    return _ooxml(
+        "xl/workbook.xml",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+        f'<workbook xmlns="{main}" xmlns:r="{relationships}">'
+        '<sheets><sheet name="Salary" sheetId="1" r:id="rId1"/></sheets></workbook>',
+        extra={
+            "xl/_rels/workbook.xml.rels": (
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Id="rId1" Target="worksheets/sheet1.xml" '
+                f'Type="{relationships}/worksheet"/></Relationships>'
+            ),
+            "xl/worksheets/sheet1.xml": f'<worksheet xmlns="{main}"><sheetData>{cells}</sheetData></worksheet>',
+        },
+        overrides={
+            "/xl/worksheets/sheet1.xml": "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"
+        },
+    )
+
+
+def _ooxml(main_part: str, main_type: str, body: str, extra=None, overrides=None) -> bytes:
+    parts = {f"/{main_part}": main_type, **(overrides or {})}
+    content_types = (
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        + "".join(f'<Override PartName="{name}" ContentType="{kind}"/>' for name, kind in parts.items())
+        + "</Types>"
+    )
+    package_rels = (
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        f'<Relationship Id="rId1" Target="{main_part}" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"/>'
+        "</Relationships>"
+    )
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w") as package:
+        package.writestr("[Content_Types].xml", content_types)
+        package.writestr("_rels/.rels", package_rels)
+        package.writestr(main_part, body)
+        for name, content in (extra or {}).items():
+            package.writestr(name, content)
+    return buffer.getvalue()
+
+
+class FakeOfficeConverter:
+    """Stand in for LibreOffice: each distinct Word or Excel file becomes a distinct payslip PDF."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def to_pdf(self, data: bytes, file_format: str) -> bytes:
+        self.calls.append(file_format)
+        return payslip_pdf(f"{file_format} {hashlib.sha256(data).hexdigest()[:8]}")

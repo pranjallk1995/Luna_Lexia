@@ -1,5 +1,7 @@
 """Google Drive import: connect once, import folders as background jobs, and follow their progress."""
 
+from datetime import datetime, timezone
+
 import httpx
 import pandas as pd
 import streamlit as st
@@ -9,7 +11,11 @@ from views.shared import LexiaTab
 
 
 class DriveImportPanel(LexiaTab):
-    """Connect Google Drive, start folder imports, and retry files that need a password."""
+    """Connect Google Drive, start folder imports, follow them, and retry failed or locked files."""
+
+    ACTIVE_STATUSES = ("queued", "listing", "running")
+    # How often the import list refreshes itself while the dialog is open.
+    REFRESH_SECONDS = 3
 
     OUTCOME_ICONS = {
         "imported": "✅",
@@ -91,7 +97,7 @@ class DriveImportPanel(LexiaTab):
         folder = typed or picked
         if button_column.button(
             ":material/cloud_download:",
-            help="Import every PDF and image in this folder",
+            help="Import every PDF, image, Word, and Excel file in this folder",
             key="drive_import",
             disabled=not folder,
             width="stretch",
@@ -107,31 +113,80 @@ class DriveImportPanel(LexiaTab):
         heading_column, refresh_column = st.columns([8, 1], vertical_alignment="center")
         heading_column.markdown('<div class="lv-preview-heading">Recent imports</div>', unsafe_allow_html=True)
         refresh_column.button(":material/refresh:", help="Refresh progress", key="drive_jobs_refresh", width="stretch")
-        try:
-            jobs = self.api.import_jobs(5)
-        except httpx.HTTPError:
-            st.caption("Import progress is unavailable right now.")
+
+        # Refreshes itself, so progress and elapsed time stay current and new or retried
+        # imports appear; reports of finished imports are fetched once (see _report).
+        @st.fragment(run_every=self.REFRESH_SECONDS)
+        def job_list() -> None:
+            try:
+                jobs = self.api.import_jobs(5)
+            except httpx.HTTPError:
+                st.caption("Import progress is unavailable right now.")
+                return
+            if not jobs:
+                st.caption("No imports yet.")
+            for job in jobs:
+                self._render_job(job)
+
+        job_list()
+
+    def _report(self, job: dict) -> dict:
+        """A job's per-file report; a finished job's never changes, so it is kept for the session."""
+        reports = st.session_state.setdefault("drive_job_reports", {})
+        job_id = str(job["job_id"])
+        if job_id in reports:
+            return reports[job_id]
+        report = self.api.import_job(job_id)
+        if job["status"] not in self.ACTIVE_STATUSES:
+            reports[job_id] = report
+        return report
+
+    @staticmethod
+    def _since(timestamp: str | None, until: str | None = None) -> str:
+        """How long from ``timestamp`` until ``until`` (default now), like ``3m 05s``."""
+        if not timestamp:
+            return ""
+        end = datetime.fromisoformat(until) if until else datetime.now(timezone.utc)
+        seconds = max(int((end - datetime.fromisoformat(timestamp)).total_seconds()), 0)
+        hours, rest = divmod(seconds, 3600)
+        minutes, seconds = divmod(rest, 60)
+        return f"{hours}h {minutes:02d}m" if hours else f"{minutes}m {seconds:02d}s" if minutes else f"{seconds}s"
+
+    def _render_progress(self, job: dict, total: int, processed: int) -> None:
+        if job["status"] == "queued":
+            queued = self._since(job.get("created_at"))
+            st.caption(f":material/hourglass_empty: Waiting for the import ahead of it · queued {queued} ago")
             return
-        if not jobs:
-            st.caption("No imports yet.")
+        if job["status"] == "listing":
+            st.caption(f":material/folder_open: Listing the folder · {self._since(job.get('started_at'))} elapsed")
             return
-        for job in jobs:
-            self._render_job(job)
+        st.progress(
+            min(processed / total, 1.0) if total else 0.0,
+            text=f"{processed} of {total} file(s) · {self._since(job.get('started_at'))} elapsed",
+        )
+        if job.get("current_item"):
+            st.caption(
+                f":material/autorenew: Reading {job['current_item']} · {self._since(job.get('current_started_at'))}"
+            )
 
     def _render_job(self, job: dict) -> None:
         total, processed = job.get("total") or 0, job.get("processed") or 0
+        active = job["status"] in self.ACTIVE_STATUSES
         counts = " · ".join(
             f"{self.OUTCOME_ICONS.get(outcome, '')} {count} {outcome.replace('_', ' ')}"
             for outcome, count in sorted((job.get("outcomes") or {}).items())
         )
-        with st.expander(f"{job['source']} — {job['status']} ({processed}/{total})"):
-            if job["status"] in ("queued", "listing", "running") and total:
-                st.progress(min(processed / total, 1.0))
+        with st.expander(f"{job['source']} — {job['status']} ({processed}/{total})", expanded=active):
+            if active:
+                self._render_progress(job, total, processed)
+            elif job.get("finished_at"):
+                took = self._since(job.get("started_at") or job.get("created_at"), job["finished_at"])
+                st.caption(f":material/timer: Took {took}")
             if job.get("error"):
                 st.error(job["error"])
             if counts:
                 st.caption(counts)
-            report = self.api.import_job(str(job["job_id"]))
+            report = self._report(job)
             items = report.get("items") or []
             if items:
                 st.dataframe(
@@ -149,7 +204,21 @@ class DriveImportPanel(LexiaTab):
                     hide_index=True,
                     width="stretch",
                 )
+            self._render_failed_retry(job)
             self._render_password_retry(job, items)
+
+    def _render_failed_retry(self, job: dict) -> None:
+        if not job.get("retryable"):
+            return
+        failed = (job.get("outcomes") or {}).get("failed", 0)
+        label = f"Retry {failed} failed file(s)" if failed else "Retry this import"
+        if st.button(label, icon=":material/replay:", key=f"drive_retry_failed_{job['job_id']}", width="stretch"):
+            try:
+                retry = self.api.retry_import_job(str(job["job_id"]))
+            except httpx.HTTPError as error:
+                st.error(LunaLexiaAPI.error_message(error, "Could not retry the import."))
+                return
+            st.toast(f"Queued {retry['source']}", icon=":material/replay:")
 
     def _render_password_retry(self, job: dict, items: list[dict]) -> None:
         locked = [item for item in items if item["outcome"] == "needs_password" and item.get("source_id")]

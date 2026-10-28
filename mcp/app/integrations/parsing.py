@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 class DoclingParser:
     """Turn PDF or image bytes into Markdown per page, OCR-ing scanned regions.
 
+    Word and Excel files arrive here already converted to PDF.
+
     Docling keeps each item's page provenance, so pages are exported one by
     one and analysis prompts and reading tools can cite page numbers. Tables
     become Markdown tables. If Docling fails, the PDF text layer read by PDFium

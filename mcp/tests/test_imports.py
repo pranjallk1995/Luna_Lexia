@@ -308,7 +308,7 @@ class TransportTests(ImportTestCase):
     def test_import_tools_are_registered(self):
         expected = {
             "google_drive_status", "list_drive_folders", "import_drive_folder",
-            "upload_documents", "get_import_job", "list_import_jobs",
+            "upload_documents", "get_import_job", "list_import_jobs", "retry_import_job",
         }
         self.assertTrue(expected <= self.tools, expected - self.tools)
 
@@ -406,3 +406,89 @@ class ResumeTests(ImportTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FailingFileImporter:
+    """Import through the real FileImporter, but fail the named files once."""
+
+    def __init__(self, files: FileImporter, failing: set[str]) -> None:
+        self.files, self.failing = files, failing
+
+    def run(self, item, job_id, drive):
+        name = item.get("name") or (item.get("drive_file") or {}).get("name")
+        if name in self.failing:
+            self.failing.discard(name)
+            self.files.imports.record_item(
+                job_id, {"source": "base64", "name": name, "outcome": "failed", "error": "model unavailable",
+                         "position": item.get("position")},
+            )
+            return "failed"
+        return self.files.run(item, job_id, drive)
+
+
+class RetryAndProgressTests(ImportTestCase):
+    def setUp(self):
+        super().setUp()
+        self.imports.jobs.files = FailingFileImporter(self.imports.jobs.files, {"two.pdf"})
+
+    def batch(self):
+        return self.imports.upload_batch(
+            [
+                {"name": "one.pdf", "content_base64": base64.b64encode(payslip_pdf("one")).decode()},
+                {"name": "two.pdf", "content_base64": base64.b64encode(payslip_pdf("two")).decode(), "doc_type": "payslip"},
+            ]
+        )
+
+    def test_failed_files_are_retried_as_a_new_job_once(self):
+        job = self.imports.job(str(self.batch()["job_id"]))
+        self.assertTrue(job["retryable"])
+        self.assertEqual(self.imports_repo.job_request(str(job["job_id"]))["retry"][0]["name"], "two.pdf")
+        retry = self.imports.retry(str(job["job_id"]))
+        report = self.imports.job(str(retry["job_id"]))
+        self.assertEqual(report["source"], "Retry of 2 upload(s)")
+        self.assertEqual([(item["name"], item["outcome"]) for item in report["items"]], [("two.pdf", "imported")])
+        self.assertFalse(report["retryable"])
+        self.assertFalse(self.imports.job(str(job["job_id"]))["retryable"])
+        with self.assertRaisesRegex(ValueError, "already retried"):
+            self.imports.retry(str(job["job_id"]))
+
+    def test_a_job_without_failures_has_nothing_to_retry(self):
+        self.imports.jobs.files.failing.clear()
+        job = self.batch()
+        self.assertIsNone(self.imports_repo.job_request(str(job["job_id"])))
+        self.assertFalse(self.imports.job(str(job["job_id"]))["retryable"])
+
+    def test_a_folder_whose_listing_failed_is_listed_again(self):
+        self.connect()
+        self.imports.max_items = 2
+        failed = self.imports.import_drive_folder("Professional")
+        self.imports.max_items = 500
+        self.assertTrue(self.imports.job(str(failed["job_id"]))["retryable"])
+        walks = self.drive.walks
+        retry = self.imports.retry(str(failed["job_id"]))
+        self.assertEqual(self.drive.walks, walks + 1)
+        self.assertEqual(self.imports.job(str(retry["job_id"]))["status"], "failed")  # still capped by the stored request
+
+    def test_older_jobs_retry_their_recorded_drive_files(self):
+        self.connect()
+        job = self.imports_repo.create_job("drive_folder", "Professional", {})
+        job_id = str(job["job_id"])
+        self.imports_repo.record_item(job_id, {"source": "drive", "source_id": "f-slip", "name": "payslip_march.pdf",
+                                               "outcome": "failed", "position": 0})
+        self.imports_repo.update_job(job_id, status="done", request=None)
+        retry = self.imports.retry(job_id)
+        self.assertEqual([item["outcome"] for item in self.imports.job(str(retry["job_id"]))["items"]], ["imported"])
+
+    def test_the_file_being_imported_is_recorded_and_cleared(self):
+        seen = []
+        files = self.imports.jobs.files
+
+        class Watching:
+            def run(inner, item, job_id, drive):
+                seen.append(self.imports_repo.jobs_by_id[job_id].get("current_item"))
+                return files.run(item, job_id, drive)
+
+        self.imports.jobs.files = Watching()
+        job = self.batch()
+        self.assertEqual(seen, ["one.pdf", "two.pdf"])
+        self.assertIsNone(self.imports_repo.jobs_by_id[str(job["job_id"])]["current_item"])

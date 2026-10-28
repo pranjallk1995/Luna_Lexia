@@ -109,6 +109,9 @@ CREATE INDEX IF NOT EXISTS import_items_source_idx ON import_items (source, sour
 ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS request jsonb;
 ALTER TABLE import_items ADD COLUMN IF NOT EXISTS position integer;
 CREATE UNIQUE INDEX IF NOT EXISTS import_items_position_idx ON import_items (job_id, position);
+-- The file a running job is on, and since when, to show its progress.
+ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS current_item text;
+ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS current_started_at timestamptz;
 -- LangGraph's checkpoint tables, from when imports ran as a checkpointed graph.
 DROP TABLE IF EXISTS checkpoint_writes, checkpoint_blobs, checkpoints, checkpoint_migrations;
 

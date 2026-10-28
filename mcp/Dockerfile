@@ -24,6 +24,15 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # does not wait on downloads; DoclingParser.ARTIFACTS_PATH loads them from here.
 RUN docling-tools models download layout tableformer rapidocr
 
+# Headless LibreOffice converts Word and Excel uploads to PDF (OfficeConverter);
+# Carlito, Caladea, and Liberation match the metrics of Calibri, Cambria, Arial,
+# and Times, so converted pages keep their original layout.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libreoffice-writer-nogui libreoffice-calc-nogui \
+        fonts-crosextra-carlito fonts-crosextra-caladea fonts-liberation \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY app ./app
 COPY tests ./tests
 

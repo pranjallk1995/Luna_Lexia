@@ -153,7 +153,7 @@ class UploadDialog(LexiaTab):
             key="upload_doc_type",
         )
         uploads = st.file_uploader(
-            ":material/upload_file: Drag and drop PDFs or photos of documents",
+            ":material/upload_file: Drag and drop PDFs, photos of documents, or Word and Excel files",
             type=list(self.context.config.UPLOAD_TYPES),
             accept_multiple_files=True,
             key=f"document_uploader_{st.session_state.uploader_key}",

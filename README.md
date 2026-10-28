@@ -47,6 +47,7 @@ original PDFs are untouched. Personal details in the screenshot are blurred.
 
 ```text
 Upload (UI, MCP tool, upload link, or HTTP API)
+  -> convert    a Word or Excel file becomes a PDF (LibreOffice), stored as that PDF
   -> unlock     a password-protected PDF is opened with its password and stored unlocked
   -> Docling    text layer, OCR for scanned pages, tables as Markdown, one entry per page
   -> classify   Pydantic AI agent: doc_type, title, summary, tags, confidence
@@ -61,6 +62,13 @@ extraction from the parsed text fails, or the document has no readable text,
 extraction is tried from page images; a document read that way is flagged for
 review.
 
+- **LibreOffice** (headless, in the backend image) converts Word (DOCX, DOC)
+  and Excel (XLSX, XLS) files to PDF, the way Drive exports Google Docs and
+  Sheets, so they are previewed, read, and shown to the model like any PDF.
+  Each sheet becomes one page, so wide sheets are not split. The file is
+  stored as `<name>.pdf`; the conversion is reproducible, so uploading the same
+  file again is reported as a duplicate. Password-protected Word and Excel
+  files are refused with a request to save them without the password.
 - **Docling** turns PDFs and photos into Markdown page by page, so scans become
   text (RapidOCR) and every page stays citable. If Docling fails, the PDF's own
   text layer is used so an upload is never lost.
@@ -227,7 +235,8 @@ docker compose up --build
 ```
 
 The first build downloads PyTorch for CUDA 13.0 and Docling's layout, table, and
-OCR models into the image (about 11.6 GB), so uploads never wait on downloads and
+OCR models, and LibreOffice for Word and Excel files, into the image (about
+12.3 GB), so uploads never wait on downloads and
 parsing works without internet access.
 
 - UI: <http://127.0.0.1:18505>
@@ -289,7 +298,7 @@ Then choose **Upload → Google Drive → Connect Google Drive**. Changing
 Drive folder imports and bulk uploads become background jobs in
 `mcp/app/services/imports.py`, run one at a time because Docling and the model
 share the GPU. Each file is inspected (skipped if it was imported before and is
-unchanged, or is not a PDF or image), downloaded, uploaded through the normal
+unchanged, or is not a PDF, image, or Word or Excel file), downloaded, uploaded through the normal
 analysis pipeline, and recorded in `import_items` with its outcome and its
 position in the job.
 
@@ -301,8 +310,17 @@ Resuming needs no extra machinery, because the database already holds the state:
 On startup, every job still `queued`, `listing`, or `running` is queued again,
 oldest first. It skips each recorded position and starts over only the file that
 was in progress; if that file's upload had already finished, duplicate detection
-(by content hash) stops a second copy. When a job finishes, its stored request is
-cleared. To retry `failed` files, start the import again; imported files are skipped.
+(by content hash) stops a second copy.
+
+While a job runs, `import_jobs.current_item` and `current_started_at` name the
+file in progress, so the UI and `get_import_job` can show it and how long it has
+taken. When a job finishes, its stored request (which may hold Base64 uploads)
+is cut down to the items of its `failed` files, or cleared if none failed; a
+folder whose listing failed keeps its request. `retry_import_job` (or **Retry**
+in the UI) queues those as a new job with their original type and password, and
+marks the old job retried so it is not queued twice. Jobs that finished before
+this keep only their recorded Drive file IDs and URLs, which are retried
+without a forced type.
 
 ## Semantic search and answers (RAG)
 
@@ -364,7 +382,7 @@ question -> embedding + full-text query -> cosine similarity and text rank -> fu
 
 ### Add and change
 
-- `upload_document` - add a PDF, PNG, JPEG, or WebP from a chat attachment (`file`), `document_url`, or `content_base64`, with an optional `password` for protected PDFs and an optional `doc_type`. Names are corrected and deduplicated like Visia's.
+- `upload_document` - add a PDF, PNG, JPEG, WebP, or Word or Excel file (stored as a PDF) from a chat attachment (`file`), `document_url`, or `content_base64`, with an optional `password` for protected PDFs and an optional `doc_type`. Names are corrected and deduplicated like Visia's.
 - `add_document` - add a small document from Base64.
 - `create_upload_link` - single-use HTTPS link for agents with a shell; accepts a `password` form field or query parameter.
 - `replace_document` - replace a document's file and re-analyze it.
@@ -400,7 +418,8 @@ starting again after a stop or restart continues with the documents still left.
 - `list_drive_folders` - subfolders of My Drive or of a `parent_id`.
 - `import_drive_folder` - import a folder given as a link, ID, or exact name, optionally `recursive` and with a forced `doc_type`; returns a job.
 - `upload_documents` - bulk upload; each item has exactly one of `drive_file_id`, `document_url`, `content_base64`, or `file`, plus an optional `password` (use it to retry Drive files reported as `needs_password`).
-- `get_import_job` / `list_import_jobs` - progress, counts per outcome, and each file's result.
+- `get_import_job` / `list_import_jobs` - progress, the file in progress, counts per outcome, and each file's result.
+- `retry_import_job` - queue a finished job's failed files (or a folder whose listing failed) as a new job, once.
 
 Hidden documents are never reachable through MCP tools.
 
@@ -414,7 +433,9 @@ the editable title, summary, and tags; review flags with a **Mark reviewed**
 button; an editable table of extracted fields; and re-extraction with a chosen
 type. The upload dialog accepts many files at once with a PDF password and an
 optional document type, and its **Google Drive** tab connects Drive, imports a
-folder, follows recent jobs, and retries locked PDFs with a password.
+folder, follows recent jobs (refreshing every few seconds with a progress bar,
+elapsed time, and the file being read), retries failed files, and retries
+locked PDFs with a password. It accepts PDFs, photos, and Word and Excel files.
 
 ## Project structure
 

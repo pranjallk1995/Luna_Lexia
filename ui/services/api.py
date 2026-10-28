@@ -141,6 +141,9 @@ class LunaLexiaAPI:
     def import_job(self, job_id: str) -> dict[str, Any]:
         return self.request("GET", f"/api/imports/{job_id}", timeout=10.0).json()
 
+    def retry_import_job(self, job_id: str) -> dict[str, Any]:
+        return self.request("POST", f"/api/imports/{job_id}/retry", timeout=60.0).json()
+
     # Hidden documents
 
     def hidden_documents(self) -> list[dict[str, Any]]:
