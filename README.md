@@ -24,6 +24,14 @@ needs to prepare tax-filing supporting documents and track finances, in the
 same way Luna Vita uses Luna Visia. MCP tools let any assistant list, search,
 read, download, upload, rename, correct, and delete documents.
 
+<p align="center">
+  <img src="docs/assets/luna-lexia-gallery.png" alt="Luna Lexia's document gallery with type, financial-year, and review tags" width="900">
+</p>
+
+The Streamlit interface lets you upload, search, view, favorite, hide, and
+correct documents; each card shows the document type, financial year, size, and
+tags, and anything that needs review is flagged.
+
 > **Requires Luna Sentia, running and healthy:** Luna Lexia keeps its data in Luna Sentia's PostgreSQL (`luna-sentia-db`) and joins Sentia's `luna_sentia_network`; it has no database of its own. Start [Luna Sentia](https://github.com/pranjallk1995/Luna_Sentia) first and wait until its `postgres` and `ollama` services report healthy, as described under [Start](#start). Sentia also serves the model: Lexia uses `qwen3-vl:8b-instruct` by default, which Sentia pulls with its other models.
 
 ## How a document is processed
@@ -133,6 +141,15 @@ curl -H "Authorization: Bearer $LUNALEXIA_API_TOKEN" \
 Treat documents with `review_flags` as unconfirmed, and read `null` fields as
 "not printed", not zero. Store the immutable `document_id` (or `public_url`)
 rather than the filename when linking a Fiora record to its supporting document.
+
+## Luna ecosystem
+
+![Luna ecosystem architecture](docs/luna-ecosystem.svg)
+
+Every Luna app is a Streamlit UI plus a FastMCP service on Luna Sentia's
+`luna_sentia_network`: its data lives in Sentia's PostgreSQL, people sign in
+through Sentia's `auth`, and model calls go to Sentia's Ollama. Orange lines are
+the calls between apps; the grey dashed line is the planned Lexia-to-Fiora link.
 
 ## Start
 
