@@ -22,6 +22,9 @@ class AppConfig:
     DRIVE_STATE_MAX_AGE_SECONDS: ClassVar[int] = 900
     ASSET_DIR: ClassVar[Path] = Path(__file__).resolve().parent.parent / "assets"
     DOCLING_ARTIFACTS_PATH: ClassVar[Path] = Path("/root/.cache/docling/models")
+    # Docling reads on the GPU only while this much is free (a scanned page peaks near
+    # 1.1 GB above its loaded models), so Sentia's Ollama and Vibia's CLAP keep theirs.
+    DOCLING_GPU_MIN_FREE_MB: ClassVar[int] = 2048
     OFFICE_BINARY: ClassVar[str] = "soffice"
     OFFICE_TIMEOUT_SECONDS: ClassVar[int] = 120
     REMOTE_FETCH_TIMEOUT_SECONDS: ClassVar[float] = 30.0

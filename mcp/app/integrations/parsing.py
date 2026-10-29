@@ -31,10 +31,14 @@ class DoclingParser:
     Markdown. ``compact_tables`` strips both, so the text stays within the
     model's prompt budget.
 
-    The converter loads its layout, table, and OCR models once, on first use,
-    on ``device`` (``auto`` picks a CUDA GPU when torch can see one). Conversions
-    run one at a time under the PDFium lock, because Docling's PDF backend also
-    uses PDFium, which is not thread-safe.
+    Docling's layout, table, and OCR models load on first use, once per device.
+    With ``device`` ``auto`` or ``cuda`` it uses the GPU, but gives way to the
+    GPU's other users (Sentia's Ollama, Luna Vibia's CLAP): a document is read on
+    the CPU when the GPU has less than ``AppConfig.DOCLING_GPU_MIN_FREE_MB`` free,
+    or again on the CPU when the GPU runs out of memory partway, and the GPU's
+    working memory is released after every document. Conversions run one at a
+    time under the PDFium lock, because Docling's PDF backend also uses PDFium,
+    which is not thread-safe.
     """
 
     NAME = "docling"
@@ -49,12 +53,12 @@ class DoclingParser:
         self.reader = reader
         self.max_text_chars = max_text_chars
         self.device = device
-        self._converter = None
+        self._converters: dict[str, object] = {}
         self._converter_lock = threading.Lock()
 
-    def converter(self):
+    def converter(self, device: str):
         with self._converter_lock:
-            if self._converter is None:
+            if device not in self._converters:
                 from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
                 from docling.datamodel.base_models import InputFormat
                 from docling.datamodel.pipeline_options import PdfPipelineOptions
@@ -63,17 +67,57 @@ class DoclingParser:
                 options = PdfPipelineOptions(
                     do_ocr=True,
                     do_table_structure=True,
-                    accelerator_options=AcceleratorOptions(device=AcceleratorDevice(self.device)),
+                    accelerator_options=AcceleratorOptions(device=AcceleratorDevice(device)),
                     artifacts_path=AppConfig.DOCLING_ARTIFACTS_PATH if AppConfig.DOCLING_ARTIFACTS_PATH.is_dir() else None,
                 )
-                self._converter = DocumentConverter(
+                self._converters[device] = DocumentConverter(
                     allowed_formats=[InputFormat.PDF, InputFormat.IMAGE],
                     format_options={
                         InputFormat.PDF: PdfFormatOption(pipeline_options=options),
                         InputFormat.IMAGE: ImageFormatOption(pipeline_options=options),
                     },
                 )
-            return self._converter
+            return self._converters[device]
+
+    @staticmethod
+    def _gpu_free_mb() -> int | None:
+        """Free GPU memory in MB, or None when torch sees no CUDA GPU."""
+        import torch
+
+        if not torch.cuda.is_available():
+            return None
+        return torch.cuda.mem_get_info()[0] // 2**20
+
+    def _device_now(self) -> str:
+        """The device for the next document: the GPU only while it has room to spare."""
+        if self.device == "cpu":
+            return "cpu"
+        free = self._gpu_free_mb()
+        if free is None:
+            return "cpu"
+        if free < AppConfig.DOCLING_GPU_MIN_FREE_MB:
+            logger.info("The GPU has %d MB free; reading this document on the CPU.", free)
+            return "cpu"
+        return "cuda"
+
+    @staticmethod
+    def _release_gpu() -> None:
+        """Hand Docling's cached GPU working memory back, keeping only its loaded models."""
+        import torch
+
+        torch.cuda.empty_cache()
+
+    @staticmethod
+    def _out_of_gpu_memory(error: BaseException | None, messages: list[str]) -> bool:
+        """Whether a conversion failed for lack of GPU memory.
+
+        Docling records a stage's failure on the page instead of raising, and wraps
+        what it does raise, so the error chain and the recorded messages are searched.
+        """
+        while error is not None:
+            messages.append(str(error))
+            error = error.__cause__ or error.__context__
+        return any("out of memory" in message.lower() for message in messages)
 
     def _bounded(self, pages: list[str]) -> list[str]:
         """Cut the pages so their total length stays within ``max_text_chars``."""
@@ -83,13 +127,31 @@ class DoclingParser:
             remaining -= len(text)
         return bounded or [""]
 
-    def _docling_pages(self, data: bytes, file_format: str) -> list[str]:
+    def _convert(self, data: bytes, file_format: str, device: str):
+        """The converted document, or None when the GPU ran out of memory."""
         from docling.datamodel.base_models import DocumentStream
 
         extension = ".pdf" if file_format == "PDF" else f".{file_format.lower()}"
-        converter = self.converter()
-        with PDFIUM_LOCK:
-            document = converter.convert(DocumentStream(name=f"document{extension}", stream=BytesIO(data))).document
+        converter = self.converter(device)
+        try:
+            with PDFIUM_LOCK:
+                result = converter.convert(DocumentStream(name=f"document{extension}", stream=BytesIO(data)))
+        except Exception as error:
+            if device == "cuda" and self._out_of_gpu_memory(error, []):
+                return None
+            raise
+        finally:
+            if device == "cuda":
+                self._release_gpu()
+        if device == "cuda" and self._out_of_gpu_memory(None, [item.error_message for item in result.errors]):
+            return None
+        return result.document
+
+    def _docling_pages(self, data: bytes, file_format: str) -> list[str]:
+        document = self._convert(data, file_format, self._device_now())
+        if document is None:
+            logger.warning("The GPU ran out of memory; reading this document again on the CPU.")
+            document = self._convert(data, file_format, "cpu")
         page_count = max(len(document.pages), 1)
         return [
             self.compact_tables(self.IMAGE_PLACEHOLDER.sub("", document.export_to_markdown(page_no=number)).strip())

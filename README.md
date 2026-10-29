@@ -5,6 +5,8 @@
 ![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![Luna Sentia required](https://img.shields.io/badge/Luna_Sentia-required-111111?logo=ollama&logoColor=white)
 ![PostgreSQL in Luna Sentia](https://img.shields.io/badge/PostgreSQL-in_Luna_Sentia-4169E1?logo=postgresql&logoColor=white)
+![Docling included](https://img.shields.io/badge/Docling-included-5A3FC0)
+![NVIDIA GPU optional](https://img.shields.io/badge/NVIDIA_GPU-optional-76B900?logo=nvidia&logoColor=white)
 ![Status: usable](https://img.shields.io/badge/Status-usable-2EA043)
 
 ## Store, read, and search your financial documents with LLMs
@@ -13,8 +15,11 @@
 
 Luna Lexia is the document counterpart of [Luna Visia](https://github.com/pranjallk1995/Luna_Visia):
 a private vault for payslips, Form 16s, bank statements, tax proofs, and other
-personal finance documents. Every upload is read with Docling (text, OCR,
-tables), classified by a local model served by [Luna Sentia](https://github.com/pranjallk1995/Luna_Sentia),
+personal finance documents. Every upload is read with
+[Docling](https://github.com/docling-project/docling) (text, OCR, tables), which
+ships inside Lexia's image with its models, so there is nothing to install; it uses
+an NVIDIA GPU when there is one and the CPU otherwise. Each document is then
+classified by a local model served by [Luna Sentia](https://github.com/pranjallk1995/Luna_Sentia),
 and its type-specific details are extracted into validated Pydantic schemas.
 Business rules then check the details, such as net pay against gross pay minus
 deductions, and flag anything that needs a person to review it.
@@ -173,8 +178,8 @@ Visia image URLs that other apps use: food images for Vita, room images for
 Lumia, and cover art for Vibia. Grey dashed lines are planned: links into Fiora
 (tax details from Lexia, transaction image and icon URLs from Visia). Luna Unia
 is the one home for all of them, on port 42069: it checks which Luna stacks are
-running and opens each one with the shared sign-in. The purple line is the mood of
-the track Vibia plays, which Lumia's music schemes follow.
+running and opens each one with the shared sign-in. The purple line is the mood and
+beats of the track Vibia plays, which Lumia's lights follow.
 
 ## Start
 
@@ -260,15 +265,24 @@ the database with
 [Adminer in Luna Sentia](https://github.com/pranjallk1995/Luna_Sentia#database-ui)
 using server `luna-sentia-db`.
 
-### GPU parsing
+### GPU parsing (optional)
 
-The MCP service is given the GPU (`gpus: all`), and Docling runs its layout,
+A GPU is not required: without one, Docling parses on the CPU. The MCP service is
+given the GPU (`gpus: all`), and Docling runs its layout,
 table, and OCR models there. `DOCLING_DEVICE` selects the device: `auto` (the
 default) uses a CUDA GPU when one is visible and the CPU otherwise, while `cuda`
 or `cpu` force one. On an RTX 5070, a scanned page takes about 0.4 s instead of
-2 s on the CPU and a text PDF about 15 times less, using under 1 GB of GPU
-memory beside Ollama's model. On a machine without an NVIDIA GPU, remove
-`gpus: all` from the `mcp` service; parsing then runs on the CPU.
+2 s on the CPU and a text PDF about 15 times less. Docling's loaded models keep
+about 0.5 GB of GPU memory, and a scanned document briefly needs about 1.1 GB more.
+On a machine without an NVIDIA GPU, remove `gpus: all` from the `mcp` service;
+parsing then runs on the CPU.
+
+Docling gives way to the GPU's other users: Sentia's Ollama and
+[Luna Vibia](https://github.com/pranjallk1995/Luna_Vibia)'s CLAP. It reads a document
+on the CPU whenever the GPU has less than 2 GB free (`DOCLING_GPU_MIN_FREE_MB` in
+`mcp/app/core/config.py`), and reads it again on the CPU if the GPU runs out of
+memory partway. After every document it releases its working memory, so only its
+models stay on the GPU.
 
 ### Model and context
 

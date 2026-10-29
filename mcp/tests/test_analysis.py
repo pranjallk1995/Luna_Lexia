@@ -314,6 +314,62 @@ class DoclingFallbackTests(unittest.TestCase):
         self.assertEqual((content.parser, content.page_texts[0]), ("pdfium", "ACME PAYSLIP"))
 
 
+class DoclingGpuSharingTests(unittest.TestCase):
+    """Docling gives the GPU way to Ollama and Vibia's CLAP when memory runs short."""
+
+    def parser(self, free_mb, results):
+        from types import SimpleNamespace
+
+        from app.integrations.parsing import DoclingParser
+
+        parser = DoclingParser(DocumentReader(), 200_000, "auto")
+        parser.devices = []
+
+        class FakeConverter:
+            def __init__(self, device):
+                self.device = device
+
+            def convert(self, stream):
+                parser.devices.append(self.device)
+                outcome = results[self.device]
+                if isinstance(outcome, Exception):
+                    raise outcome
+                document = SimpleNamespace(pages={1: None}, export_to_markdown=lambda page_no: outcome)
+                return SimpleNamespace(document=document, errors=[])
+
+        parser.converter = FakeConverter
+        parser._gpu_free_mb = lambda: free_mb
+        parser._release_gpu = lambda: parser.devices.append("released")
+        return parser
+
+    def test_a_roomy_gpu_reads_the_document_and_releases_its_working_memory(self):
+        parser = self.parser(6000, {"cuda": "Net Pay 80,000"})
+        self.assertEqual(parser._docling_pages(b"%PDF", "PDF"), ["Net Pay 80,000"])
+        self.assertEqual(parser.devices, ["cuda", "released"])
+
+    def test_a_busy_gpu_sends_the_document_to_the_cpu(self):
+        parser = self.parser(1500, {"cpu": "Net Pay 80,000"})
+        self.assertEqual(parser._docling_pages(b"%PDF", "PDF"), ["Net Pay 80,000"])
+        self.assertEqual(parser.devices, ["cpu"])
+
+    def test_running_out_of_gpu_memory_reads_the_document_again_on_the_cpu(self):
+        try:
+            raise RuntimeError("CUDA out of memory. Tried to allocate 512.00 MiB")
+        except RuntimeError as error:
+            try:
+                raise RuntimeError("Pipeline StandardPdfPipeline failed") from error
+            except RuntimeError as wrapped:
+                failure = wrapped
+        parser = self.parser(6000, {"cuda": failure, "cpu": "Net Pay 80,000"})
+        self.assertEqual(parser._docling_pages(b"%PDF", "PDF"), ["Net Pay 80,000"])
+        self.assertEqual(parser.devices, ["cuda", "released", "cpu"])
+
+    def test_other_gpu_errors_still_raise(self):
+        parser = self.parser(6000, {"cuda": RuntimeError("boom")})
+        with self.assertRaises(RuntimeError):
+            parser._docling_pages(b"%PDF", "PDF")
+
+
 class OllamaAdapterTests(unittest.TestCase):
     def test_strict_format_requires_every_field_and_drops_noise(self):
         schema = strict_format(DOCUMENT_TYPES["payslip"].schema.model_json_schema())
