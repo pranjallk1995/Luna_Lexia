@@ -182,6 +182,8 @@ class DocumentPreviewDialog:
             for field in self.TEXT_FIELDS:
                 self._render_text(keys, field, str(metadata.get(field) or ""))
             self._render_tags(keys, list(metadata.get("tags") or []))
+            if metadata.get("analysis_model"):
+                self._render_model(keys, str(metadata["analysis_model"]))
             self._render_review(keys, metadata)
             self._render_details(keys, metadata)
             self._render_reextract(keys, metadata)
@@ -448,6 +450,22 @@ class DocumentPreviewDialog:
             st.session_state[keys.tag_draft] = ""
             st.rerun(scope="fragment")
 
+    # Model
+
+    def _render_model(self, keys: PreviewKeys, model: str) -> None:
+        """Show which model read the document and wrote its details."""
+        box = st.container()
+        self._marker(box, "lv-preview-details")
+        icon_column, model_column = box.columns([1, 13.4], vertical_alignment="center")
+        self._marker(icon_column, "lv-preview-static-icon")
+        icon_column.button(
+            ":material/smart_toy:", disabled=True, key=f"model_icon_{keys.name}", width="stretch"
+        )
+        model_column.markdown(
+            f'<div class="lv-preview-caption">Analyzed by {html.escape(model)} + Docling</div>',
+            unsafe_allow_html=True,
+        )
+
     # Review flags
 
     def _mark_reviewed(self, keys: PreviewKeys) -> None:
@@ -557,7 +575,6 @@ class DocumentPreviewDialog:
             f"FY {metadata['financial_year']}" if metadata.get("financial_year") else None,
             metadata.get("issuer"),
             f"{metadata['confidence']:.0%} confident" if metadata.get("confidence") is not None else None,
-            f"Analyzed by {metadata['analysis_model']}" if metadata.get("analysis_model") else None,
         ]
         st.markdown(
             '<div class="lv-preview-heading">Extracted details</div>'
