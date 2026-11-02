@@ -55,7 +55,8 @@ export type UploadOptions = { password?: string; doc_type?: string };
 const segment = encodeURIComponent;
 
 export const thumbnailUrl = (document: DocumentRecord) =>
-  `/app/thumbnails/${segment(document.name)}?v=${document.version}`;
+  // Browsers keep thumbnails for a year, so a new shape needs a new URL: change `shape` with THUMBNAIL_SIZE.
+  `/app/thumbnails/${segment(document.name)}?v=${document.version}&shape=3x2`;
 
 export const pageUrl = (document: DocumentRecord, index: number, size: "preview" | "zoom") =>
   `/app/pages/${segment(document.name)}/${index}?size=${size}&v=${document.version}`;

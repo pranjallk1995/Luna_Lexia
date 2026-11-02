@@ -1,24 +1,18 @@
-import { Bot, Check, FileText, Heading, ListChecks, Maximize2, Minimize2, Pencil, Plus, RefreshCw, Tag, Text, Trash2, X, ZoomIn, ZoomOut } from "lucide-react";
-import { useEffect, useRef, useState, type FormEvent, type PointerEvent, type ReactNode } from "react";
+import { ArrowLeft, ArrowRight, Check, Download, Eye, EyeOff, Heart, ListChecks, Maximize2, Minimize2, Pencil, Plus, RefreshCw, Trash2, X, ZoomIn, ZoomOut } from "lucide-react";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent } from "react";
 
-import { pageUrl, useDocumentTypes, type DocumentActions, type DocumentRecord, type DocumentType, type Section, type Settings } from "../api";
-import { displayName, messageOf, normalizedTag, splitName } from "../lib";
+import { downloadUrl, pageUrl, useDocumentTypes, type DocumentActions, type DocumentRecord, type DocumentType, type Section, type Settings } from "../api";
+import { displayName, messageOf, normalizedTag, readableName, sizeLabel, splitName, tagSlot, visibleTags } from "../lib";
 import { VALUE_COLUMN, cell, fieldLabel, isListField, itemColumns, tableRows, tableValues, type Row } from "../tables";
-import { Dialog } from "./Dialog";
+import { useModal } from "./Dialog";
+import type { CardAction } from "./DocumentCard";
 import { useToast } from "./Toasts";
-
-function DetailRow({ icon, children }: { icon: ReactNode; children: ReactNode }) {
-  return (
-    <div className="lv-detail">
-      <span className="lv-detail-icon">{icon}</span>
-      <div className="lv-detail-content">{children}</div>
-    </div>
-  );
-}
 
 type EditableProps = {
   label: string;
   value: string;
+  /** What to show while not editing, when it differs from the text being edited. */
+  shown?: string;
   maxLength: number;
   placeholder?: string;
   /** Resolve to close the editor; reject to keep it open with the error. */
@@ -26,7 +20,7 @@ type EditableProps = {
 };
 
 /** Text with a pencil: Enter or the checkmark saves, Escape cancels. */
-function EditableText({ label, value, maxLength, placeholder, save }: EditableProps) {
+function EditableText({ label, value, shown, maxLength, placeholder, save }: EditableProps) {
   const [draft, setDraft] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -47,8 +41,8 @@ function EditableText({ label, value, maxLength, placeholder, save }: EditablePr
 
   if (draft === null) {
     return (
-      <div className="lv-detail-line">
-        <span className="lv-detail-text">{value}</span>
+      <div className="lv-detail-line lv-detail-line-top">
+        <span className="lv-detail-text">{shown ?? value}</span>
         <button className="lv-icon-button" type="button" aria-label={`Edit ${label.toLowerCase()}`} onClick={() => setDraft(value)}>
           <Pencil size={15} />
         </button>
@@ -122,21 +116,19 @@ function TagEditor({ document, maxTags, actions }: TagsProps) {
   };
 
   return (
-    <div className="lv-detail-line lv-detail-line-top">
-      <div className="lv-preview-tags">
-        {tags.map((tag, index) => (
-          <button
-            className={`lv-tag lv-tag-${index % 6} lv-tag-removable`}
-            type="button"
-            key={tag}
-            aria-label={`Remove tag ${tag}`}
-            onClick={() => removeTag(tag)}
-          >
-            {tag}
-            <X size={12} />
-          </button>
-        ))}
-      </div>
+    <div className="lv-preview-tags">
+      {visibleTags(tags).map((tag) => (
+        <button
+          className={`lv-tag lv-tag-${tagSlot(tag)} lv-tag-removable`}
+          type="button"
+          key={tag}
+          aria-label={`Remove tag ${tag}`}
+          onClick={() => removeTag(tag)}
+        >
+          {tag}
+          <X size={12} />
+        </button>
+      ))}
       {draft === null ? (
         <button className="lv-icon-button" type="button" aria-label="Add a tag" onClick={() => setDraft("")}>
           <Plus size={16} />
@@ -230,7 +222,7 @@ function PageViewer({ document, zoomLevels, expanded, onExpand }: { document: Do
       </div>
       <div
         ref={frame}
-        className={zoomIndex === 0 ? "lx-page-frame" : "lx-page-frame lx-page-zoomed"}
+        className={zoomIndex === 0 ? "lx-page-frame lx-page-fit" : "lx-page-frame lx-page-zoomed"}
         onPointerDown={grab}
         onPointerMove={drag}
         onPointerUp={release}
@@ -240,7 +232,7 @@ function PageViewer({ document, zoomLevels, expanded, onExpand }: { document: Do
           src={pageUrl(document, shown - 1, zoomIndex === 0 ? "preview" : "zoom")}
           alt={`Page ${shown}`}
           draggable={false}
-          style={{ width: `${zoom}%` }}
+          style={zoomIndex === 0 ? undefined : { width: `${zoom}%` }}
         />
       </div>
     </div>
@@ -322,18 +314,12 @@ function ListField({ field, label, columns, values, onSave }: { field: string; l
   );
 }
 
-function Details({ document, type, typeLabel, actions }: { document: DocumentRecord; type?: DocumentType; typeLabel: string; actions: DocumentActions }) {
+function Details({ document, type, actions }: { document: DocumentRecord; type?: DocumentType; actions: DocumentActions }) {
   const [error, setError] = useState("");
   const schemas = type?.fields?.properties ?? {};
   const extracted = document.extracted ?? {};
   const scalars = Object.keys(schemas).filter((field) => !isListField(schemas[field]));
   const lists = Object.keys(schemas).filter((field) => isListField(schemas[field]));
-  const facts = [
-    typeLabel,
-    document.financial_year ? `FY ${document.financial_year}` : null,
-    document.issuer,
-    document.confidence !== null && document.confidence !== undefined ? `${Math.round(document.confidence * 100)}% confident` : null,
-  ].filter(Boolean);
 
   // The backend parses and validates whatever is typed; only changed fields are sent.
   const save = (change: Record<string, unknown>, label: string) => {
@@ -346,8 +332,7 @@ function Details({ document, type, typeLabel, actions }: { document: DocumentRec
 
   return (
     <section className="lx-details">
-      <h3>Extracted details</h3>
-      <div className="lv-card-facts">{facts.join(" · ")}</div>
+      <h3 className="lv-section">Extracted details</h3>
       {document.extraction_error && <p className="lv-alert lv-alert-error">Extraction failed: {document.extraction_error}</p>}
       {scalars.length > 0 && (
         <table className="lx-edit-table">
@@ -425,26 +410,38 @@ function Reextract({ document, types, actions }: { document: DocumentRecord; typ
 
 type Props = {
   document: DocumentRecord;
+  /** Where this document sits in the gallery being browsed, from 1. */
+  position: number;
+  total: number;
+  /** The document the next-arrow leads to, fetched ahead so stepping forward is immediate. */
+  next: DocumentRecord;
   section: Section;
   settings: Settings;
   actions: DocumentActions;
+  onStep: (delta: number) => void;
+  onAction: (action: CardAction, document: DocumentRecord) => void;
   onClose: () => void;
 };
 
-/** A document's pages beside its metadata and extracted details, all editable in place. */
-export function PreviewDialog({ document, section, settings, actions, onClose }: Props) {
+/** One document filling the window: its pages on a stage, its details and actions in a side panel. */
+export function PreviewDialog({ document, position, total, next, section, settings, actions, onStep, onAction, onClose }: Props) {
+  const ref = useModal();
   const toast = useToast();
   const { types, label: typeLabel } = useDocumentTypes();
   const [expanded, setExpanded] = useState(false);
-  const shownName = displayName(document.name);
-  const { stem: shownStem } = splitName(shownName);
+  const shownName = readableName(document.name);
+  const { stem: storedStem } = splitName(displayName(document.name));
   const { suffix } = splitName(document.name);
   const flags = document.review_flags ?? [];
   const type = types.find((candidate) => candidate.doc_type === (document.doc_type || "other"));
 
+  useEffect(() => {
+    new Image().src = pageUrl(next, 0, "preview");
+  }, [next]);
+
   const rename = async (draft: string) => {
     const stem = draft.trim();
-    if (stem === shownStem) return;
+    if (stem === storedStem) return;
     const newName = `${stem}${suffix}`;
     await actions.rename.mutateAsync({ name: document.name, newName });
     toast(`Renamed to ${newName}.`);
@@ -461,37 +458,69 @@ export function PreviewDialog({ document, section, settings, actions, onClose }:
       { onError: (failure) => toast(messageOf(failure, "Could not mark the document as reviewed.")) },
     );
 
+  // Arrow keys belong to whatever is being typed in or chosen.
+  const stepWithArrowKeys = (event: KeyboardEvent) => {
+    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
+    if (event.key === "ArrowLeft") onStep(-1);
+    if (event.key === "ArrowRight") onStep(1);
+  };
+
   return (
-    <Dialog title={shownName} size="large" onClose={onClose}>
-      <div className={expanded ? "lx-document lx-document-expanded" : "lx-document"}>
-        <PageViewer document={document} zoomLevels={settings.zoom_levels} expanded={expanded} onExpand={() => setExpanded(!expanded)} />
-        <div className="lx-side">
-          {section !== "hidden" && (
-            <DetailRow icon={<FileText size={16} />}>
+    <dialog
+      ref={ref}
+      className={expanded ? "lv-viewer lx-viewer lx-viewer-expanded" : "lv-viewer lx-viewer"}
+      aria-label={shownName}
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+      onKeyDown={stepWithArrowKeys}
+    >
+      <div className="lv-viewer-body">
+        <div
+          className="lv-stage"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) onClose();
+          }}
+        >
+          {/* Keyed so each document opens on its first page, at 100%. */}
+          <PageViewer key={document.name} document={document} zoomLevels={settings.zoom_levels} expanded={expanded} onExpand={() => setExpanded(!expanded)} />
+          {total > 1 && (
+            <>
+              <button className="lv-step lv-step-prev" type="button" aria-label="Previous document" onClick={() => onStep(-1)}>
+                <ArrowLeft size={18} />
+              </button>
+              <button className="lv-step lv-step-next" type="button" aria-label="Next document" onClick={() => onStep(1)}>
+                <ArrowRight size={18} />
+              </button>
+            </>
+          )}
+        </div>
+        {/* Keyed so a half-finished edit never carries over to the next document. */}
+        <aside className="lv-panel" aria-label="Document details" key={document.name}>
+          <div className="lv-panel-top">
+            <span>
+              {position} of {total}
+            </span>
+            <button className="lv-icon-button" type="button" aria-label="Close" onClick={onClose}>
+              <X size={18} />
+            </button>
+          </div>
+          <div className="lv-viewer-name">
+            {section === "hidden" ? (
+              <span className="lv-detail-text">{shownName}</span>
+            ) : (
               <EditableText
-                key={shownStem}
+                key={storedStem}
                 label="Name"
-                value={shownStem}
+                value={storedStem}
+                shown={shownName}
                 maxLength={settings.name_max_chars}
                 placeholder={`Letters, numbers, and underscores (${suffix} is kept)`}
                 save={rename}
               />
-            </DetailRow>
-          )}
-          <DetailRow icon={<Heading size={16} />}>
-            <EditableText label="Title" value={document.title ?? ""} maxLength={settings.title_max_chars} save={saveText("title")} />
-          </DetailRow>
-          <DetailRow icon={<Text size={16} />}>
-            <EditableText label="Summary" value={document.summary ?? ""} maxLength={settings.summary_max_chars} save={saveText("summary")} />
-          </DetailRow>
-          <DetailRow icon={<Tag size={16} />}>
-            <TagEditor document={document} maxTags={settings.max_tags} actions={actions} />
-          </DetailRow>
-          {document.analysis_model && (
-            <DetailRow icon={<Bot size={16} />}>
-              <span className="lv-detail-text">Analyzed by {document.analysis_model} + Docling</span>
-            </DetailRow>
-          )}
+            )}
+          </div>
           {flags.length > 0 && (
             <div className="lx-review">
               <div>
@@ -502,15 +531,98 @@ export function PreviewDialog({ document, section, settings, actions, onClose }:
                   ))}
                 </ul>
               </div>
-              <button className="lv-button" type="button" aria-label="Mark as reviewed" onClick={markReviewed}>
-                <ListChecks size={16} />
+              <button className="lv-icon-button" type="button" aria-label="Mark as reviewed" title="Mark as reviewed" onClick={markReviewed}>
+                <ListChecks size={18} />
               </button>
             </div>
           )}
-          <Details document={document} type={type} typeLabel={typeLabel(document.doc_type)} actions={actions} />
+          <section>
+            <h3 className="lv-section">Title</h3>
+            <EditableText label="Title" value={document.title ?? ""} maxLength={settings.title_max_chars} save={saveText("title")} />
+          </section>
+          <section>
+            <h3 className="lv-section">Summary</h3>
+            <EditableText label="Summary" value={document.summary ?? ""} maxLength={settings.summary_max_chars} save={saveText("summary")} />
+          </section>
+          <section>
+            <h3 className="lv-section">Tags</h3>
+            <TagEditor document={document} maxTags={settings.max_tags} actions={actions} />
+          </section>
+          <section>
+            <h3 className="lv-section">Details</h3>
+            <dl className="lv-facts">
+              <dt>Type</dt>
+              <dd>{typeLabel(document.doc_type)}</dd>
+              {document.financial_year && (
+                <>
+                  <dt>Year</dt>
+                  <dd>FY {document.financial_year}</dd>
+                </>
+              )}
+              {document.issuer && (
+                <>
+                  <dt>Issuer</dt>
+                  <dd>{document.issuer}</dd>
+                </>
+              )}
+              {document.confidence !== null && document.confidence !== undefined && (
+                <>
+                  <dt>Confidence</dt>
+                  <dd>{Math.round(document.confidence * 100)}%</dd>
+                </>
+              )}
+              <dt>Pages</dt>
+              <dd>{document.page_count || 1}</dd>
+              <dt>Size</dt>
+              <dd>{sizeLabel(document.size_bytes)}</dd>
+              {suffix && (
+                <>
+                  <dt>Format</dt>
+                  <dd>{suffix.slice(1).toUpperCase()}</dd>
+                </>
+              )}
+              {document.analysis_model && (
+                <>
+                  <dt>Analyzed by</dt>
+                  <dd>{document.analysis_model} + Docling</dd>
+                </>
+              )}
+            </dl>
+          </section>
+          <Details document={document} type={type} actions={actions} />
           <Reextract key={document.doc_type} document={document} types={types} actions={actions} />
-        </div>
+          <div className="lv-panel-actions">
+            {section !== "hidden" && (
+              <button
+                className={`lv-icon-button${document.favorite ? " lv-favorite-active" : ""}`}
+                type="button"
+                aria-label={document.favorite ? "Remove from favorites" : "Add to favorites"}
+                aria-pressed={Boolean(document.favorite)}
+                title={document.favorite ? "Remove from favorites" : "Add to favorites"}
+                onClick={() => onAction("favorite", document)}
+              >
+                <Heart size={18} fill={document.favorite ? "currentColor" : "none"} />
+              </button>
+            )}
+            <a className="lv-icon-button" href={downloadUrl(document, displayName(document.name))} aria-label="Download" title="Download">
+              <Download size={18} />
+            </a>
+            {section === "view" && (
+              <button className="lv-icon-button" type="button" aria-label="Hide" title="Hide" onClick={() => onAction("hide", document)}>
+                <EyeOff size={18} />
+              </button>
+            )}
+            {section === "hidden" && (
+              <button className="lv-icon-button" type="button" aria-label="Restore" title="Restore" onClick={() => onAction("restore", document)}>
+                <Eye size={18} />
+              </button>
+            )}
+            <button className="lv-icon-button" type="button" aria-label="Delete" title="Delete" onClick={() => onAction("delete", document)}>
+              <Trash2 size={18} />
+            </button>
+          </div>
+        </aside>
       </div>
-    </Dialog>
+    </dialog>
   );
 }

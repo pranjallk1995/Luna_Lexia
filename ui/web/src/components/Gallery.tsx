@@ -38,7 +38,7 @@ export function Gallery({ section, layout, settings }: Props) {
   const count = pageCount(filtered.length, settings.documents_per_page);
   const current = Math.min(page, count - 1);
   const documents = pageOf(filtered, current, settings.documents_per_page);
-  const opened = openName ? (data ?? []).find((document) => document.name === openName) : undefined;
+  const openIndex = filtered.findIndex((document) => document.name === openName);
 
   // Fetch the next page's thumbnails while idle, so paging forward shows them at once.
   useEffect(() => {
@@ -76,9 +76,16 @@ export function Gallery({ section, layout, settings }: Props) {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  // The gallery follows along behind the viewer, so closing it lands on the document last seen.
+  const stepViewer = (delta: number) => {
+    const index = (openIndex + delta + filtered.length) % filtered.length;
+    setOpenName(filtered[index].name);
+    setPage(Math.floor(index / settings.documents_per_page));
+  };
+
   return (
     <>
-      <SearchBox label={COPY[section].label} value={query} onChange={changeQuery} />
+      <SearchBox label={COPY[section].label} value={query} count={data ? filtered.length : undefined} onChange={changeQuery} />
       {error && <p className="lv-alert lv-alert-error">{error.message}</p>}
       {isPending && <div className="lv-skeleton-grid" aria-label="Loading documents" />}
       {data && !filtered.length && (
@@ -94,12 +101,17 @@ export function Gallery({ section, layout, settings }: Props) {
           <Pager page={current} count={count} onChange={changePage} />
         </>
       )}
-      {opened && (
+      {openIndex >= 0 && (
         <PreviewDialog
-          document={opened}
+          document={filtered[openIndex]}
+          position={openIndex + 1}
+          total={filtered.length}
+          next={filtered[(openIndex + 1) % filtered.length]}
           section={section}
           settings={settings}
           actions={actions}
+          onStep={stepViewer}
+          onAction={onAction}
           onClose={() => setOpenName(null)}
         />
       )}

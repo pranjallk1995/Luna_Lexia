@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DocumentType } from "./api";
-import { displayName, matching, pageCount, since, sizeLabel, splitName, pageSlots } from "./lib";
+import { displayName, readableName, tagSlot, visibleTags, matching, pageCount, since, sizeLabel, splitName, pageSlots } from "./lib";
 import { cell, fieldLabel, isListField, itemColumns, tableRows, tableValues } from "./tables";
 
 describe("names and sizes", () => {
@@ -106,5 +106,18 @@ describe("pageSlots", () => {
       expect(slots).toHaveLength(7);
       for (const wanted of [0, page, 39]) expect(slots).toContain(wanted);
     }
+  });
+});
+
+describe("what cards show", () => {
+  it("reads names without prefix, extension, or underscores", () => {
+    expect(readableName(`${"a".repeat(32)}_pay_slip.pdf`)).toBe("pay slip");
+    expect(readableName("___.pdf")).toBe("___");
+  });
+
+  it("hides the system tag and colours a tag the same everywhere", () => {
+    expect(visibleTags(["AI  Info", "salary"])).toEqual(["salary"]);
+    expect(visibleTags(null)).toEqual([]);
+    expect(tagSlot("Tax  Proof")).toBe(tagSlot("tax proof"));
   });
 });

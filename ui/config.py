@@ -52,8 +52,9 @@ class UIConfig:
     EXTRACT_TIMEOUT_SECONDS: ClassVar[float] = 900.0
     # A 50 MiB document grows by a third as base64, plus its JSON wrapper.
     MAX_REQUEST_BYTES: ClassVar[int] = 70 * 1024 * 1024
-    # Twice the 420 x 300 card, showing the top of the first page, where the letterhead is.
-    THUMBNAIL_SIZE: ClassVar[tuple[int, int]] = (840, 600)
+    # Twice the 420 x 280 card, showing the top of the first page, where the letterhead is.
+    # Changing the shape also needs a new `shape` in the web app's thumbnailUrl.
+    THUMBNAIL_SIZE: ClassVar[tuple[int, int]] = (840, 560)
     THUMBNAIL_RENDER_EDGE: ClassVar[int] = 1200
     THUMBNAIL_QUALITY: ClassVar[int] = 80
     THUMBNAIL_CACHE_ENTRIES: ClassVar[int] = 256
@@ -68,7 +69,7 @@ class UIConfig:
     # Thumbnail, page, and file URLs carry the file's modified time, so they never go stale.
     IMMUTABLE_CACHE_CONTROL: ClassVar[str] = "private, max-age=31536000, immutable"
     CONTENT_SECURITY_POLICY: ClassVar[str] = (
-        "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+        "default-src 'self'; img-src 'self' data:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; "
         "object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
     )
 

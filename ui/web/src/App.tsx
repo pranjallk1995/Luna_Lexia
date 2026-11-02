@@ -1,4 +1,4 @@
-import { Eye, LayoutGrid, List, Lock, LogOut, Star, Upload, type LucideIcon } from "lucide-react";
+import { Eye, Heart, LayoutGrid, List, Lock, LogOut, Upload, type LucideIcon } from "lucide-react";
 import { useState } from "react";
 
 import type { Section, Settings } from "./api";
@@ -11,7 +11,7 @@ import { useUploads } from "./uploads";
 
 const SECTIONS: { id: Section; label: string; icon: LucideIcon }[] = [
   { id: "view", label: "View Documents", icon: Eye },
-  { id: "favorites", label: "Favorite Documents", icon: Star },
+  { id: "favorites", label: "Favorite Documents", icon: Heart },
   { id: "hidden", label: "Hidden Documents", icon: Lock },
 ];
 

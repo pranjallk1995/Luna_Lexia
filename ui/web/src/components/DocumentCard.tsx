@@ -2,9 +2,11 @@ import { Download, Eye, EyeOff, Heart, MoreVertical, Trash2 } from "lucide-react
 import { memo, useEffect, useRef, useState } from "react";
 
 import { downloadUrl, thumbnailUrl, type DocumentRecord, type Section } from "../api";
-import { displayName, sizeLabel } from "../lib";
+import { displayName, readableName, sizeLabel, visibleTags } from "../lib";
 
 export type CardAction = "open" | "favorite" | "delete" | "hide" | "restore";
+
+const TAGS_SHOWN = { grid: 3, list: 8 };
 
 type Props = {
   document: DocumentRecord;
@@ -17,7 +19,7 @@ type Props = {
 function CardMenu({ document, section, onAction }: Pick<Props, "document" | "section" | "onAction">) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const name = displayName(document.name);
+  const name = readableName(document.name);
 
   useEffect(() => {
     if (!open) return;
@@ -43,7 +45,7 @@ function CardMenu({ document, section, onAction }: Pick<Props, "document" | "sec
   return (
     <div className="lv-menu" ref={ref}>
       <button
-        className="lv-menu-trigger"
+        className="lv-more"
         type="button"
         aria-label={`Actions for ${name}`}
         aria-expanded={open}
@@ -53,7 +55,12 @@ function CardMenu({ document, section, onAction }: Pick<Props, "document" | "sec
       </button>
       {open && (
         <div className="lv-menu-items">
-          <a className="lv-icon-button" href={downloadUrl(document, name)} aria-label="Download" title="Download">
+          <a
+            className="lv-icon-button"
+            href={downloadUrl(document, displayName(document.name))}
+            aria-label="Download"
+            title="Download"
+          >
             <Download size={17} />
           </a>
           <button className="lv-icon-button" type="button" aria-label="Delete" title="Delete" onClick={() => act("delete")}>
@@ -76,7 +83,9 @@ function CardMenu({ document, section, onAction }: Pick<Props, "document" | "sec
 }
 
 function DocumentCardBase({ document, section, layout, typeLabel, onAction }: Props) {
-  const name = displayName(document.name);
+  const name = readableName(document.name);
+  const tags = visibleTags(document.tags);
+  const hiddenTags = tags.length - TAGS_SHOWN[layout];
   const pages = document.page_count || 1;
   const facts = [
     typeLabel,
@@ -88,7 +97,7 @@ function DocumentCardBase({ document, section, layout, typeLabel, onAction }: Pr
     <article className={`lv-card lv-card-${layout}`}>
       <div className="lv-thumbnail">
         <button className="lv-thumbnail-open" type="button" aria-label={`Open ${name}`} onClick={() => onAction("open", document)}>
-          <img src={thumbnailUrl(document)} alt="" width={420} height={300} loading="lazy" decoding="async" />
+          <img src={thumbnailUrl(document)} alt="" width={420} height={280} loading="lazy" decoding="async" />
         </button>
         {section !== "hidden" && (
           <button
@@ -103,23 +112,28 @@ function DocumentCardBase({ document, section, layout, typeLabel, onAction }: Pr
         )}
       </div>
       <div className="lv-card-details">
-        <div className="lv-card-title">
-          <span className="lv-card-name" title={name}>
-            {name}
-          </span>
-          <CardMenu document={document} section={section} onAction={onAction} />
-        </div>
+        <p className="lv-card-name" title={name}>
+          {name}
+        </p>
         <div className="lv-card-tags">
-          {(document.tags ?? []).map((tag, index) => (
-            <span className={`lv-tag lv-tag-${index % 6}`} key={tag}>
+          {tags.slice(0, TAGS_SHOWN[layout]).map((tag) => (
+            <span className="lv-tag lv-tag-quiet" key={tag}>
               {tag}
             </span>
           ))}
-        </div>
-        <div className="lv-card-facts">
-          <span>{facts.join(" · ")}</span>
+          {hiddenTags > 0 && <span className="lv-tag lv-tag-more lv-tag-more-wide">+{hiddenTags}</span>}
+          {/* Phones show one tag in a grid card, so they need their own count. */}
+          {layout === "grid" && tags.length > 1 && (
+            <span className="lv-tag lv-tag-more lv-tag-more-phone">+{tags.length - 1}</span>
+          )}
         </div>
         {Boolean(document.review_flags?.length) && <span className="lv-review-flag">needs review</span>}
+        <div className="lv-card-foot">
+          <p className="lv-card-facts">
+            {facts.join(" · ")}
+          </p>
+          <CardMenu document={document} section={section} onAction={onAction} />
+        </div>
       </div>
     </article>
   );
