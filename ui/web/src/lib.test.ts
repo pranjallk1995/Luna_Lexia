@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DocumentType } from "./api";
-import { displayName, matching, pageCount, since, sizeLabel, splitName } from "./lib";
+import { displayName, matching, pageCount, since, sizeLabel, splitName, pageSlots } from "./lib";
 import { cell, fieldLabel, isListField, itemColumns, tableRows, tableValues } from "./tables";
 
 describe("names and sizes", () => {
@@ -82,5 +82,29 @@ describe("detail tables", () => {
     expect(itemColumns(type, "skills")).toBeNull();
     expect(isListField(type.fields!.properties!.earnings)).toBe(true);
     expect(isListField(type.fields!.properties!.employer)).toBe(false);
+  });
+});
+
+describe("pageSlots", () => {
+  it("shows every page when they fit", () => {
+    expect(pageSlots(0, 1)).toEqual([0]);
+    expect(pageSlots(2, 7)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+  });
+
+  it("keeps seven slots with gaps around the current page", () => {
+    expect(pageSlots(0, 17)).toEqual([0, 1, 2, 3, 4, null, 16]);
+    expect(pageSlots(3, 17)).toEqual([0, 1, 2, 3, 4, null, 16]);
+    expect(pageSlots(4, 17)).toEqual([0, null, 3, 4, 5, null, 16]);
+    expect(pageSlots(12, 17)).toEqual([0, null, 11, 12, 13, null, 16]);
+    expect(pageSlots(13, 17)).toEqual([0, null, 12, 13, 14, 15, 16]);
+    expect(pageSlots(16, 17)).toEqual([0, null, 12, 13, 14, 15, 16]);
+  });
+
+  it("always includes the first, last, and current page", () => {
+    for (let page = 0; page < 40; page += 1) {
+      const slots = pageSlots(page, 40);
+      expect(slots).toHaveLength(7);
+      for (const wanted of [0, page, 39]) expect(slots).toContain(wanted);
+    }
   });
 });
