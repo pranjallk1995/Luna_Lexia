@@ -1,5 +1,5 @@
-streamlit==1.49.1
-st-img-selector==0.0.2
+starlette==1.10.0
+uvicorn==0.54.0
 httpx==0.28.1
 pypdfium2==5.14.0
 Pillow==11.3.0

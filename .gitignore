@@ -2,7 +2,6 @@
 .env
 .env.*
 !.env.example
-ui/.streamlit/secrets.toml
 
 # Python
 __pycache__/
@@ -18,3 +17,7 @@ __pycache__/
 # Personal documents and model-evaluation results (real payslips, IDs, tax forms)
 model_evaluations/results/
 *.jsonl
+
+# Browser app
+ui/web/node_modules/
+ui/web/dist/

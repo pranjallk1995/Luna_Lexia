@@ -33,7 +33,7 @@ read, download, upload, rename, correct, and delete documents.
   <img src="docs/assets/luna-lexia-gallery.png" alt="Luna Lexia's document gallery with type, financial-year, and review tags" width="900">
 </p>
 
-The Streamlit interface lets you upload, search, view, favorite, hide, and
+The React interface lets you upload, search, view, favorite, hide, and
 correct documents; each card shows the document type, financial year, size, and
 tags, and anything that needs review is flagged.
 
@@ -171,7 +171,7 @@ rather than the filename when linking a Fiora record to its supporting document.
 
 ![Luna ecosystem architecture](docs/luna-ecosystem.svg)
 
-Every Luna app is a Streamlit UI plus a FastMCP service on Luna Sentia's
+Every Luna app is a React UI plus a FastMCP service on Luna Sentia's
 `luna_sentia_network`: its data lives in Sentia's PostgreSQL, people sign in
 through Sentia's `auth`, and model calls go to Sentia's Ollama. Orange lines are
 Visia image URLs that other apps use: food images for Vita, room images for
@@ -469,7 +469,7 @@ Hidden documents are never reachable through MCP tools.
 
 ## Web UI
 
-The Streamlit UI mirrors Visia: grid and list galleries with search,
+The React UI mirrors Visia: grid and list galleries with search,
 favorites, sign-in-gated hidden documents, downloads, renames, and deletion.
 Cards show the top of the first page, the document type, financial year, page
 count, and a `needs review` badge. The document dialog shows the pages beside
@@ -490,7 +490,7 @@ Lexia follows the shared Luna layout (see the Visia README):
 - `mcp/app/integrations/` - `parsing.py` (Docling), `ollama.py` (native Ollama model for Pydantic AI), `extraction.py` (classification and extraction agents), and `remote.py` (SSRF-guarded document sources), `embeddings.py` (Sentia embeddings), and `drive.py` (Google Drive sign-in and client).
 - `mcp/app/services/` - use cases (`application.py`), semantic search and answers (`semantic.py`), PDF handling and previews (`documents.py`), ZIP downloads, upload links, and `imports.py` (bulk import jobs and their queue).
 - `mcp/app/transport/` - MCP tools, HTTP routes, bearer authentication, and branding.
-- `ui/` - the Streamlit interface; `services/documents.py` renders pages with PDFium.
+- `ui/` - the React app in `web/` and its Starlette gateway; `documents.py` renders pages with PDFium.
 
 Run the backend tests in the built image:
 
