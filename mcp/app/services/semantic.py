@@ -153,6 +153,9 @@ class SemanticIndex:
         # Set by the composition root: slots newly embedded documents into a saved similarity order.
         self.showcase: Any = None
 
+    def forget(self, user_id: str) -> None:
+        self._errors.pop(user_id, None)
+
     @property
     def last_error(self) -> str | None:
         return self._errors.get(tenancy.current())
@@ -213,12 +216,17 @@ class SemanticIndex:
                 logger.exception("Could not list the people to embed for")
                 users = []
             for user_id in users:
-                with tenancy.acting_as(user_id):
-                    try:
-                        self.sync()
-                    except Exception as error:  # noqa: BLE001 - nor a model outage, or one person's failure
-                        self.last_error = str(error)[:500]
-                        logger.exception("Embedding sync failed")
+                try:
+                    with tenancy.acting_as(user_id):
+                        try:
+                            self.sync()
+                        except tenancy.NoUserError:
+                            raise
+                        except Exception as error:  # noqa: BLE001 - nor a model outage, or one person's failure
+                            self.last_error = str(error)[:500]
+                            logger.exception("Embedding sync failed")
+                except tenancy.NoUserError:
+                    continue  # Deleted while this ran.
             self._wake.wait(AppConfig.SEMANTIC_POLL_SECONDS)
             self._wake.clear()
 

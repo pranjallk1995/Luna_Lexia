@@ -208,6 +208,8 @@ class ImportJobs:
                         self.imports.update_job(
                             job_id, status="failed", error="Unexpected error; see the logs.", finished=True
                         )
+            except tenancy.NoUserError:
+                logger.info("Dropped an import job of someone deleted.")
             finally:
                 self._queue.task_done()
 

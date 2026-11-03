@@ -5,7 +5,7 @@ import uvicorn
 from app.core import tenancy
 from app.core.config import AppConfig
 from app.data.database import Database
-from app.data.tenants import adopt_loose_files
+from app.data.tenants import adopt_loose_files, remove_folder
 from app.transport.luna_mcp import LunaMCP
 from app.data.repositories import ChunkRepository, DocumentRepository, ImportRepository, PublicURLRepository
 from app.integrations.drive import DriveOAuth
@@ -80,6 +80,8 @@ class LunaLexiaApplication:
         self.branding = ServerBranding(config.mcp_public_url, name="Luna Lexia")
         self.mcp = LunaMCP(
             "Luna Lexia",
+            app="lexia",
+            remove_user=self.remove_user,
             public_url=config.mcp_public_url or f"http://localhost:{config.port}",
             api_token=config.api_token,
             open_paths=("/api/public/", "/api/downloads/", "/api/uploads/", "/api/drive/callback"),
@@ -89,6 +91,15 @@ class LunaLexiaApplication:
         )
         LexiaMCPTools(self.mcp, self.service, sources)
         LexiaHTTPRoutes(self.mcp, self.service, self.branding, config.api_token)
+
+    def remove_user(self, user_id: str) -> None:
+        """Delete everything this person has in this app."""
+        self.database.tenants.remove(user_id)
+        remove_folder(self.config.document_dir, user_id)
+        self.service.downloads.store.remove_user(user_id)
+        self.service.reanalysis.forget(user_id)
+        self.service.semantic.forget(user_id)
+
 
     def run(self) -> None:
         """Serve Luna Lexia over the streamable HTTP transport."""
