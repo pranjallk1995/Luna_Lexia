@@ -53,6 +53,8 @@ CREATE INDEX IF NOT EXISTS document_metadata_type_year_idx
     ON document_metadata (hidden, doc_type, financial_year);
 
 -- The weighted full-text vector over the filename, analysis, tags, and parsed page text.
+-- An optional similarity order for the visible library (NULL = newest first).
+ALTER TABLE document_metadata ADD COLUMN IF NOT EXISTS showcase_rank integer;
 CREATE OR REPLACE FUNCTION document_search_vector() RETURNS trigger AS $$
 BEGIN
     NEW.search_vector :=

@@ -16,6 +16,7 @@ from app.services.application import LexiaService
 from app.services.documents import DocumentReader
 from app.services.imports import FileImporter, ImportJobs, ImportService
 from app.services.semantic import Chunker, SemanticIndex
+from app.services.showcase import ShowcaseSorter
 from app.transport.branding import ServerBranding
 from app.transport.http_routes import LexiaHTTPRoutes
 from app.transport.mcp_tools import LexiaMCPTools
@@ -64,6 +65,9 @@ class LunaLexiaApplication:
             config.document_model,
             config.context_tokens,
         )
+        self.service.showcase = ShowcaseSorter(self.service.visible.documents, self.service.semantic.tag)
+        self.service.semantic.showcase = self.service.showcase
+        self.service.hidden.showcase = self.service.showcase
         self.service.semantic.start()
         self.branding = ServerBranding(config.mcp_public_url, name="Luna Lexia")
         self.mcp = FastMCP(

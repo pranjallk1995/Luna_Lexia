@@ -118,6 +118,13 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(len(stored), len(embedder.inputs))
         self.assertEqual(semantic.sync()["embedded"], [])
 
+    def test_newly_embedded_documents_are_placed_in_the_saved_order(self):
+        placed = []
+        semantic = index(FakeChunks([DOCUMENT]))
+        semantic.showcase = type("Showcase", (), {"place": staticmethod(placed.append)})
+        semantic.sync()
+        self.assertEqual(placed, ["march.pdf"])
+
     def test_an_unreachable_model_is_reported_not_raised(self):
         semantic = index(FakeChunks([DOCUMENT]), FakeEmbedder(fail=True))
         self.assertEqual(semantic.sync(), {"embedded": [], "failed": ["march.pdf"]})
