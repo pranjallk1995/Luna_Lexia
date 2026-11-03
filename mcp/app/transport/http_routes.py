@@ -15,6 +15,7 @@ from mcp.server.fastmcp import FastMCP
 from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
+from app.core import tenancy
 from app.core.models import MetadataChange
 from app.services.application import LexiaService
 from app.services.documents import display_name
@@ -178,7 +179,10 @@ class LexiaHTTPRoutes:
             )
 
         async def public_document(request: Request):
-            path = visible.public_path(self.name(request))
+            identifier = self.name(request)
+            # An unknown identifier may be a filename from an old link: only the owner's work.
+            with tenancy.acting_as(visible.documents.user_of_document_id(identifier) or tenancy.OWNER):
+                path = visible.public_path(identifier)
             return FileResponse(
                 path,
                 headers={
@@ -324,9 +328,10 @@ class LexiaHTTPRoutes:
             if request.query_params.get("error"):
                 return page("Google Drive was not connected", request.query_params["error"])
             try:
-                email = await anyio.to_thread.run_sync(
-                    imports.connect, str(request.url), request.query_params.get("state", "")
-                )
+                state = request.query_params.get("state", "")
+                # Google's redirect carries no session: the signed state says who started it.
+                with tenancy.acting_as(imports.oauth.user_of(state)):
+                    email = await anyio.to_thread.run_sync(imports.connect, str(request.url), state)
             except Exception as error:  # noqa: BLE001 - shown to the person who signed in
                 return page("Google Drive was not connected", str(error))
             return page("Google Drive connected to Luna Lexia", f"Signed in as {email}. You can close this tab.")

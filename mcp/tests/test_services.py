@@ -34,10 +34,11 @@ class LexiaServiceTestCase(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.downloads_temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name) / "u_owner"
+        self.root.mkdir(parents=True)
         self.repository = FakeDocumentRepository()
         self.config = AppConfig(
-            document_dir=self.root,
+            document_dir=self.root.parent,
             database_url="postgresql://test",
             ollama_url="http://ollama:11434",
             document_model="test-model",
@@ -141,7 +142,7 @@ class IngestTests(LexiaServiceTestCase):
     def test_a_stopped_reanalysis_ends_before_the_next_document(self):
         self.visible.ingest("march.pdf", pdf_payload())
         self.repository.rows["march.pdf"]["schema_version"] = 0
-        reanalysis = self.service.reanalysis
+        reanalysis = self.service.reanalysis.mine()
         reanalysis._stop.set()
         reanalysis._progress = {"state": "running", "total": 1, "done": 0, "reanalyzed": [], "failed": [], "flagged": []}
         reanalysis.run(reanalysis.preview()["documents"])

@@ -101,6 +101,9 @@ class FakeDocumentRepository:
             None,
         )
 
+    def user_of_document_id(self, identifier):
+        return None
+
     def name_for_document_id(self, document_id):
         return next(
             (name for name, row in self.rows.items() if row["document_id"] == document_id), None

@@ -17,6 +17,7 @@ file takes seconds of model time and a folder can hold dozens.
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import queue
 import threading
@@ -27,6 +28,7 @@ from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
 
+from app.core import tenancy
 from app.core.schemas import document_type
 from app.data.repositories import ImportRepository, Row
 from app.integrations.drive import DriveClient, DriveFile, DriveOAuth
@@ -72,7 +74,9 @@ class FileImporter:
                     raise ImportSkipped("skipped")
             data, name = fetched or self.download(item, file, drive, name)
             if upcoming is not None:
-                self._ahead[(job_id, upcoming.get("position"))] = self._fetcher.submit(self.fetch_ahead, upcoming, drive)
+                self._ahead[(job_id, upcoming.get("position"))] = self._fetcher.submit(
+                    contextvars.copy_context().run, self.fetch_ahead, upcoming, drive
+                )
             outcome, document_name, error = *self.upload(item, name, data), None
         except ImportSkipped as stop:
             outcome, document_name, error = stop.outcome, None, stop.error
@@ -186,7 +190,7 @@ class ImportJobs:
         if self.run_inline:
             self._run(job_id)
             return
-        self._queue.put(job_id)
+        self._queue.put((tenancy.current(), job_id))
         with self._lock:
             if self._worker is None or not self._worker.is_alive():
                 self._worker = threading.Thread(target=self._loop, name="lexia-imports", daemon=True)
@@ -194,12 +198,18 @@ class ImportJobs:
 
     def _loop(self) -> None:
         while True:
-            job_id = self._queue.get()
+            user_id, job_id = self._queue.get()
             try:
-                self._run(job_id)
-            except Exception:  # noqa: BLE001 - one broken job never stops the worker
-                logger.exception("Import job %s failed", job_id)
-                self.imports.update_job(job_id, status="failed", error="Unexpected error; see the logs.", finished=True)
+                with tenancy.acting_as(user_id):
+                    try:
+                        self._run(job_id)
+                    except Exception:  # noqa: BLE001 - one broken job never stops the worker
+                        logger.exception("Import job %s failed", job_id)
+                        self.imports.update_job(
+                            job_id, status="failed", error="Unexpected error; see the logs.", finished=True
+                        )
+            except tenancy.NoUserError:
+                logger.info("Dropped an import job of someone deleted.")
             finally:
                 self._queue.task_done()
 

@@ -173,7 +173,8 @@ rather than the filename when linking a Fiora record to its supporting document.
 
 Every Luna app is a React UI plus a FastMCP service on Luna Sentia's
 `luna_sentia_network`: its data lives in Sentia's PostgreSQL, people sign in
-through Sentia's `auth`, and model calls go to Sentia's Ollama. Orange lines are
+through Sentia's `auth`, and model calls go to Sentia's Ollama. Visia's SigLIP 2 image
+embeddings and Vibia's CLAP music embeddings run inside those apps instead. Orange lines are
 Visia image URLs that other apps use: food images for Vita, room images for
 Lumia, and cover art for Vibia. Grey dashed lines are planned: links into Fiora
 (tax details from Lexia, transaction image and icon URLs from Visia). Luna Unia
@@ -277,7 +278,8 @@ about 0.5 GB of GPU memory, and a scanned document briefly needs about 1.1 GB mo
 On a machine without an NVIDIA GPU, remove `gpus: all` from the `mcp` service;
 parsing then runs on the CPU.
 
-Docling gives way to the GPU's other users: Sentia's Ollama and
+Docling gives way to the GPU's other users: Sentia's Ollama,
+[Luna Visia](https://github.com/pranjallk1995/Luna_Visia)'s SigLIP 2, and
 [Luna Vibia](https://github.com/pranjallk1995/Luna_Vibia)'s CLAP. It reads a document
 on the CPU whenever the GPU has less than 2 GB free (`DOCLING_GPU_MIN_FREE_MB` in
 `mcp/app/core/config.py`), and reads it again on the CPU if the GPU runs out of

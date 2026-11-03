@@ -10,6 +10,7 @@ or a stop picks up exactly the documents still left.
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import threading
 from datetime import datetime, timezone
@@ -66,7 +67,9 @@ class Reanalysis:
                 "failed": [],
                 "flagged": [],
             }
-            self._worker = threading.Thread(target=self.run, args=(selected,), name="lexia-reanalysis", daemon=True)
+            self._worker = threading.Thread(
+                target=contextvars.copy_context().run, args=(self.run, selected), name="lexia-reanalysis", daemon=True
+            )
             self._worker.start()
             return self.status()
 

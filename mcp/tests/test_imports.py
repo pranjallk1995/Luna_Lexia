@@ -129,6 +129,9 @@ class FakeOAuth(DriveOAuth):
     def __init__(self) -> None:
         super().__init__("client", "secret", "http://localhost:18004/api/drive/callback", "x" * 32)
 
+    def user_of(self, state):
+        return "owner"
+
     def exchange(self, callback_url, state):
         return "me@example.com", "refresh-token"
 
@@ -136,10 +139,11 @@ class FakeOAuth(DriveOAuth):
 class ImportTestCase(unittest.TestCase):
     def setUp(self):
         self.temp, self.downloads_temp = tempfile.TemporaryDirectory(), tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name) / "u_owner"
+        self.root.mkdir(parents=True)
         self.repository = FakeDocumentRepository()
         config = AppConfig(
-            document_dir=self.root,
+            document_dir=self.root.parent,
             database_url="postgresql://test",
             ollama_url="http://ollama:11434",
             document_model="test-model",
