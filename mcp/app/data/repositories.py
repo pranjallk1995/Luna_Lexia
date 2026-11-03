@@ -64,6 +64,9 @@ class DocumentRepository(Repository):
         "file_format, page_count, parser, size_bytes, content_sha256, analysis_model, schema_version, "
         "created_at, updated_at, hidden, favorite, public_url"
     )
+    # Unranked documents (new uploads, or every document when no similarity order is
+    # saved) come first, newest first; then the saved similarity order.
+    LIBRARY_ORDER = "showcase_rank NULLS FIRST, updated_at DESC, name"
 
     @staticmethod
     def _filters(doc_types: list[str] | None, financial_year: str | None) -> tuple[list[str], list[Any]]:
@@ -117,22 +120,22 @@ class DocumentRepository(Repository):
         doc_types: list[str] | None = None,
         financial_year: str | None = None,
     ) -> list[Row]:
-        """List visible, hidden, or all records newest first, optionally filtered."""
+        """List visible, hidden, or all records in the saved order or newest first, optionally filtered."""
         clauses, params = self._filters(doc_types, financial_year)
         clauses.insert(0, "(%s::boolean IS NULL OR hidden = %s)")
         return self.fetch_all(
             f"""SELECT {self.COLUMNS} FROM document_metadata
                 WHERE {' AND '.join(clauses)}
-                ORDER BY updated_at DESC, name""",
+                ORDER BY {self.LIBRARY_ORDER}""",
             (hidden, hidden, *params),
         )
 
     def list_favorites(self) -> list[Row]:
-        """List visible favorite documents newest first."""
+        """List visible favorite documents in the saved order or newest first."""
         return self.fetch_all(
             f"""SELECT {self.COLUMNS} FROM document_metadata
                 WHERE favorite = true AND hidden = false
-                ORDER BY updated_at DESC, name"""
+                ORDER BY {self.LIBRARY_ORDER}"""
         )
 
     def is_hidden(self, name: str) -> bool:
@@ -216,12 +219,62 @@ class DocumentRepository(Repository):
             raise FileNotFoundError(f"Document {name!r} was not found.")
         return row
 
+    def showcase_candidates(self, model: str) -> list[Row]:
+        """Visible documents newest first, with ranks and the mean of their passage embeddings.
+
+        The embedding is None while a document has no passages from ``model``.
+        """
+        rows = self.fetch_all(
+            """SELECT d.name, d.showcase_rank,
+                      (SELECT avg(c.embedding)::text FROM document_chunks c
+                       WHERE c.document_id = d.document_id AND c.embedding_model = %s) AS embedding
+               FROM document_metadata d WHERE d.hidden = false ORDER BY d.updated_at DESC, d.name""",
+            (model,),
+        )
+        return [
+            {
+                **row,
+                "embedding": [float(value) for value in row["embedding"].strip("[]").split(",")]
+                if row["embedding"]
+                else None,
+            }
+            for row in rows
+        ]
+
+    def save_showcase_order(self, names: list[str]) -> None:
+        """Rank visible documents in the given order; any visible document not listed becomes unranked."""
+        with self.database.connect() as connection:
+            connection.execute("UPDATE document_metadata SET showcase_rank = NULL WHERE showcase_rank IS NOT NULL")
+            connection.execute(
+                """UPDATE document_metadata AS document SET showcase_rank = ordered.rank
+                   FROM unnest(%s::text[]) WITH ORDINALITY AS ordered(name, rank)
+                   WHERE document.name = ordered.name AND document.hidden = false""",
+                (names,),
+            )
+
+    def insert_showcase_rank(self, name: str, rank: int) -> None:
+        """Give a visible document ``rank`` in the saved order, moving later documents down one."""
+        with self.database.connect() as connection:
+            connection.execute(
+                "UPDATE document_metadata SET showcase_rank = showcase_rank + 1 WHERE showcase_rank >= %s", (rank,)
+            )
+            connection.execute(
+                "UPDATE document_metadata SET showcase_rank = %s WHERE name = %s AND hidden = false", (rank, name)
+            )
+
+    def clear_showcase_order(self) -> int:
+        """Return the library to newest first; the count of documents that were ranked."""
+        rows = self.fetch_all(
+            "UPDATE document_metadata SET showcase_rank = NULL WHERE showcase_rank IS NOT NULL RETURNING name"
+        )
+        return len(rows)
+
     def set_hidden(self, names: list[str], hidden: bool) -> list[str]:
         """Persist hidden state and return the names that actually changed."""
         if not names:
             return []
         rows = self.fetch_all(
-            """UPDATE document_metadata SET hidden = %s, updated_at = now()
+            """UPDATE document_metadata SET hidden = %s, showcase_rank = NULL, updated_at = now()
                WHERE name = ANY(%s) AND hidden <> %s RETURNING name""",
             (hidden, names, hidden),
         )

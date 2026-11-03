@@ -427,6 +427,24 @@ class LexiaMCPTools:
             return await offload(semantic.ask, question, sources, doc_types, financial_year)
 
         @server.tool()
+        async def sort_documents(
+            order: Literal["similarity", "newest"] = "similarity", start: str | None = None
+        ) -> dict[str, Any]:
+            """Arrange the visible library so alike documents sit together, or return it to newest first.
+
+            - similarity: orders every visible document so neighbors are about
+              alike things, by the cosine similarity of the mean of each
+              document's stored passage embeddings; nothing is embedded again.
+              It starts from start (an exact document name) or the newest
+              document. The order is saved: the web library, favorites, and
+              list_documents follow it. Documents added or restored later are
+              slotted in next to their most similar neighbors; sort again now
+              and then to tidy the order.
+            - newest: clears the saved order.
+            """
+            return await offload(self.service.showcase.sort, order, start)
+
+        @server.tool()
         async def get_semantic_index_status() -> dict[str, Any]:
             """Report the semantic index: embedding model, documents indexed or pending, passage
             count, the similarity measure used, and the last embedding error, if any."""

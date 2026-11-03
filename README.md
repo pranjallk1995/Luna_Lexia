@@ -415,7 +415,8 @@ question -> embedding + full-text query -> cosine similarity and text rank -> fu
 
 ### Browse and read
 
-- `list_documents` - visible documents newest first, filterable by `doc_types` and `financial_year`, with `include_preview` for a sheet of first pages.
+- `sort_documents` - arrange the library: `order="similarity"` saves an order where neighbors are about alike things, by the cosine similarity of the mean of each document's passage embeddings, and new documents are slotted in beside their closest match; `order="newest"` clears it.
+- `list_documents` - visible documents in the saved order or newest first, filterable by `doc_types` and `financial_year`, with `include_preview` for a sheet of first pages.
 - `search_documents` - full-text search over filenames, titles, issuers, summaries, tags, and the parsed page text (including OCR), with tag, type, and year filters.
 - `get_document` - one document's complete record: extracted details, key facts, review flags, confidence, and file properties.
 - `list_document_data` - extracted details for many documents at once (up to 100), for tax filing and financial tracking.

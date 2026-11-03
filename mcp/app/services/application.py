@@ -880,6 +880,8 @@ class HiddenDocumentService(DocumentCollectionService):
 
     HIDDEN = True
     WRONG_COLLECTION_MESSAGE = "Only hidden documents can use this route."
+    # Set by the composition root: slots restored documents into a saved similarity order.
+    showcase: Any = None
 
     def set_hidden(self, names: list[str], hidden: bool) -> dict[str, Any]:
         """Move documents into or out of the logical Hidden Vault."""
@@ -887,6 +889,9 @@ class HiddenDocumentService(DocumentCollectionService):
         for name in clean_names:
             self.storage.existing_path(name)
         changed = self.documents.set_hidden(clean_names, hidden)
+        if not hidden and self.showcase:
+            for name in changed:
+                self.showcase.place(name)
         return {
             "status": "hidden" if hidden else "restored",
             "names": changed,
@@ -971,6 +976,8 @@ class LexiaService:
         self.imports: Any = None
         # Set by the composition root: the SemanticIndex for semantic search and answers.
         self.semantic: Any = None
+        # Set by the composition root: the ShowcaseSorter for the library's similarity order.
+        self.showcase: Any = None
         # Background re-analysis of stored documents, e.g. after a model change.
         self.reanalysis = Reanalysis(indexer)
 

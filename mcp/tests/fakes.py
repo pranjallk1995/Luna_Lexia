@@ -41,7 +41,11 @@ class FakeDocumentRepository:
 
     @staticmethod
     def public(row):
-        return {key: value for key, value in row.items() if key != "page_texts"}
+        return {key: value for key, value in row.items() if key not in ("page_texts", "embedding", "showcase_rank")}
+
+    @staticmethod
+    def in_order(rows):
+        return sorted(rows, key=lambda row: (row.get("showcase_rank") is not None, row.get("showcase_rank") or 0))
 
     def upsert(self, record, public_base_url):
         previous = self.rows.get(record.name, {})
@@ -73,14 +77,14 @@ class FakeDocumentRepository:
     def list(self, hidden=False, doc_types=None, financial_year=None):
         return [
             self.public(row)
-            for row in self.rows.values()
+            for row in self.in_order(self.rows.values())
             if (hidden is None or row["hidden"] == hidden)
             and (not doc_types or row["doc_type"] in doc_types)
             and (not financial_year or row["financial_year"] == financial_year)
         ]
 
     def list_favorites(self):
-        return [self.public(row) for row in self.rows.values() if row["favorite"] and not row["hidden"]]
+        return [self.public(row) for row in self.in_order(self.rows.values()) if row["favorite"] and not row["hidden"]]
 
     def is_hidden(self, name):
         if name not in self.rows:
@@ -132,8 +136,36 @@ class FakeDocumentRepository:
         )
         return self.public(row)
 
+    def showcase_candidates(self, model):
+        visible = [row for row in self.rows.values() if not row["hidden"]]
+        return [
+            {"name": row["name"], "embedding": row.get("embedding"), "showcase_rank": row.get("showcase_rank")}
+            for row in reversed(visible)
+        ]
+
+    def save_showcase_order(self, names):
+        for row in self.rows.values():
+            row["showcase_rank"] = None
+        for rank, name in enumerate(names, 1):
+            self.rows[name]["showcase_rank"] = rank
+
+    def insert_showcase_rank(self, name, rank):
+        for row in self.rows.values():
+            if row.get("showcase_rank") is not None and row["showcase_rank"] >= rank:
+                row["showcase_rank"] += 1
+        self.rows[name]["showcase_rank"] = rank
+
+    def clear_showcase_order(self):
+        ranked = [row for row in self.rows.values() if row.get("showcase_rank") is not None]
+        for row in ranked:
+            row["showcase_rank"] = None
+        return len(ranked)
+
     def set_hidden(self, names, hidden):
-        return self._set_flag(names, "hidden", hidden, include_hidden=True)
+        changed = self._set_flag(names, "hidden", hidden, include_hidden=True)
+        for name in changed:
+            self.rows[name]["showcase_rank"] = None
+        return changed
 
     def set_favorite(self, names, favorite):
         return self._set_flag(names, "favorite", favorite, include_hidden=False)

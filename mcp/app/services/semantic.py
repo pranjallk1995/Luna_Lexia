@@ -149,6 +149,8 @@ class SemanticIndex:
         self.last_error: str | None = None
         # Passages are stored under the model and passage version that made them.
         self.tag = f"{embedder.model}#passages-v{Chunker.VERSION}"
+        # Set by the composition root: slots newly embedded documents into a saved similarity order.
+        self.showcase: Any = None
 
     # Indexing
 
@@ -173,6 +175,8 @@ class SemanticIndex:
                         [(passage.page, passage.content, vector) for passage, vector in zip(passages, vectors)],
                     )
                     embedded.append(document["name"])
+                    if self.showcase:
+                        self.showcase.place(document["name"])
                 except (httpx.HTTPError, ValueError) as error:
                     self.last_error = f"{document['name']}: {error}"[:500]
                     logger.warning("Could not embed %s: %s", document["name"], error)
