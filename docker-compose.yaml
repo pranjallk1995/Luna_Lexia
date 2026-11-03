@@ -8,6 +8,8 @@ services:
     # it when present). Remove this line to run on CPU on a machine without one.
     gpus: all
     environment:
+      LUNA_SSO_URL: ${LUNA_SSO_URL:?Set LUNA_SSO_URL to Luna Sentia's public sign-on address}
+      LUNA_SSO_INTERNAL_URL: ${LUNA_SSO_INTERNAL_URL:-http://luna-sentia-auth:8000}
       DATABASE_URL: postgresql://lunalexia:${POSTGRES_PASSWORD:-lunalexia-dev}@luna-sentia-db:5432/lunalexia
       DOCUMENT_DIR: /data/documents
       OLLAMA_URL: ${OLLAMA_URL:-http://luna-sentia-ollama:11434}

@@ -1,10 +1,12 @@
 """Compose and run the Luna Lexia MCP and HTTP server."""
 
 import uvicorn
-from mcp.server.fastmcp import FastMCP
 
+from app.core import tenancy
 from app.core.config import AppConfig
 from app.data.database import Database
+from app.data.tenants import adopt_loose_files
+from app.transport.luna_mcp import LunaMCP
 from app.data.repositories import ChunkRepository, DocumentRepository, ImportRepository, PublicURLRepository
 from app.integrations.drive import DriveOAuth
 from app.integrations.embeddings import OllamaEmbedder
@@ -31,19 +33,23 @@ class LunaLexiaApplication:
         self.database.initialize_schema()
         self.database.initialize_semantic_schema(config.embedding_dimensions)
         reader = DocumentReader()
-        self.service = LexiaService.create(
-            config,
-            DocumentRepository(self.database),
-            PublicURLRepository(self.database),
-            DoclingParser(reader, config.max_stored_text_chars, config.docling_device),
-            DocumentAnalyzer(
-                OllamaChat(config.ollama_url, config.document_model, config.context_tokens),
-                reader,
-                config.max_prompt_chars,
-                config.max_vision_pages,
-                config.page_images_with_text,
-            ),
-        )
+        adopt_loose_files(config.document_dir)
+        with tenancy.acting_as(tenancy.OWNER):
+            self.service = LexiaService.create(
+                config,
+                DocumentRepository(self.database),
+                PublicURLRepository(self.database),
+                DoclingParser(reader, config.max_stored_text_chars, config.docling_device),
+                DocumentAnalyzer(
+                    OllamaChat(config.ollama_url, config.document_model, config.context_tokens),
+                    reader,
+                    config.max_prompt_chars,
+                    config.max_vision_pages,
+                    config.page_images_with_text,
+                ),
+            )
+        # Public links are served by this backend, so a new person's start at its address.
+        self.database.tenants.after_create = lambda: self.service.urls.seed(config.mcp_public_url or config.public_base_url)
         sources = DocumentSourceResolver(
             self.service.visible.decoder, config.max_document_bytes, config.max_upload_redirects
         )
@@ -56,7 +62,9 @@ class LunaLexiaApplication:
             config.token_encryption_key,
             config.max_import_items,
         )
-        jobs.resume_unfinished()
+        for user_id in self.database.tenants.users():
+            with tenancy.acting_as(user_id):
+                jobs.resume_unfinished()
         self.service.semantic = SemanticIndex(
             ChunkRepository(self.database),
             OllamaEmbedder(config.ollama_url, config.embedding_model, config.embedding_dimensions),
@@ -70,8 +78,14 @@ class LunaLexiaApplication:
         self.service.hidden.showcase = self.service.showcase
         self.service.semantic.start()
         self.branding = ServerBranding(config.mcp_public_url, name="Luna Lexia")
-        self.mcp = FastMCP(
-            "Luna Lexia", host=config.host, port=config.port, icons=self.branding.mcp_icons()
+        self.mcp = LunaMCP(
+            "Luna Lexia",
+            public_url=config.mcp_public_url or f"http://localhost:{config.port}",
+            api_token=config.api_token,
+            open_paths=("/api/public/", "/api/downloads/", "/api/uploads/", "/api/drive/callback"),
+            host=config.host,
+            port=config.port,
+            icons=self.branding.mcp_icons(),
         )
         LexiaMCPTools(self.mcp, self.service, sources)
         LexiaHTTPRoutes(self.mcp, self.service, self.branding, config.api_token)

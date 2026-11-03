@@ -19,6 +19,7 @@ from typing import Any
 
 import httpx
 
+from app.core import tenancy
 from app.core.schemas import DOCUMENT_TYPES
 from app.data.repositories import ChunkRepository, Row
 from app.integrations.embeddings import OllamaEmbedder
@@ -146,11 +147,19 @@ class SemanticIndex:
         self.rrf_k = rrf_k
         self._wake = threading.Event()
         self._worker: threading.Thread | None = None
-        self.last_error: str | None = None
+        self._errors: dict[str, str | None] = {}
         # Passages are stored under the model and passage version that made them.
         self.tag = f"{embedder.model}#passages-v{Chunker.VERSION}"
         # Set by the composition root: slots newly embedded documents into a saved similarity order.
         self.showcase: Any = None
+
+    @property
+    def last_error(self) -> str | None:
+        return self._errors.get(tenancy.current())
+
+    @last_error.setter
+    def last_error(self, value: str | None) -> None:
+        self._errors[tenancy.current()] = value
 
     # Indexing
 
@@ -199,10 +208,17 @@ class SemanticIndex:
     def _loop(self) -> None:
         while True:
             try:
-                self.sync()
-            except Exception as error:  # noqa: BLE001 - the worker must survive a database or model outage
-                self.last_error = str(error)[:500]
-                logger.exception("Embedding sync failed")
+                users = self.chunks.database.tenants.users()
+            except Exception:  # noqa: BLE001 - the worker must survive a database outage
+                logger.exception("Could not list the people to embed for")
+                users = []
+            for user_id in users:
+                with tenancy.acting_as(user_id):
+                    try:
+                        self.sync()
+                    except Exception as error:  # noqa: BLE001 - nor a model outage, or one person's failure
+                        self.last_error = str(error)[:500]
+                        logger.exception("Embedding sync failed")
             self._wake.wait(AppConfig.SEMANTIC_POLL_SECONDS)
             self._wake.clear()
 

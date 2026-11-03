@@ -5,6 +5,8 @@ from contextlib import contextmanager
 
 import psycopg
 from psycopg.rows import dict_row
+from app.core import tenancy
+from app.data.tenants import TenantSchemas, first_value, use_space
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS document_metadata (
@@ -130,38 +132,52 @@ class Database:
 
     def __init__(self, database_url: str) -> None:
         self.database_url = database_url
+        self.tenants = TenantSchemas(self.transaction, self.create_tables)
 
     @contextmanager
-    def connect(self) -> Iterator[psycopg.Connection]:
-        """Yield one connection; its transaction commits when the block succeeds."""
+    def transaction(self) -> Iterator[psycopg.Connection]:
+        """Yield a connection to no one's data; its transaction commits when the block succeeds."""
         with psycopg.connect(self.database_url, row_factory=dict_row) as connection:
             yield connection
 
+    @contextmanager
+    def connect(self) -> Iterator[psycopg.Connection]:
+        """Yield one connection to the current person's schema, in one transaction."""
+        user_id = tenancy.current()
+        self.tenants.ensure(user_id)
+        with self.transaction() as connection:
+            use_space(connection, user_id)
+            yield connection
+
     def initialize_schema(self) -> None:
-        """Create or upgrade the idempotent Luna Lexia database schema."""
-        with psycopg.connect(self.database_url, autocommit=True) as connection:
-            connection.execute(SCHEMA_SQL)
+        """Give the owner any data from before there were users; schemas come on first use."""
+        self.tenants.adopt_public_tables()
 
     def initialize_semantic_schema(self, dimensions: int) -> None:
-        """Create the chunk table for semantic search, sized for the embedding model.
-
-        Embeddings are derived data: when the model's dimensions change, the table is
-        rebuilt empty and the background indexer embeds every document again.
-        """
-        with psycopg.connect(self.database_url, autocommit=True) as connection:
-            installed = connection.execute("SELECT 1 FROM pg_extension WHERE extname = 'vector'").fetchone()
-            if installed is None:
+        """Size semantic search for the embedding model, and require pgvector."""
+        with self.transaction() as connection:
+            if connection.execute("SELECT 1 FROM pg_extension WHERE extname = 'vector'").fetchone() is None:
                 raise RuntimeError(
                     "The pgvector extension is missing; run Luna Sentia's postgres-init to install it."
                 )
-            current = connection.execute(
-                """SELECT atttypmod FROM pg_attribute
-                   WHERE attrelid = to_regclass('document_chunks') AND attname = 'embedding'"""
-            ).fetchone()
-            if current is not None and current[0] != dimensions:
-                connection.execute("DROP TABLE document_chunks")
-            connection.execute(
-                f"""
+        self.embedding_dimensions = dimensions
+
+    def create_tables(self, connection: psycopg.Connection) -> None:
+        """Create or upgrade one person's idempotent Luna Lexia schema.
+
+        Embeddings are derived data: when the model's dimensions change, the chunk table
+        is rebuilt empty and the background indexer embeds every document again.
+        """
+        connection.execute(SCHEMA_SQL)
+        dimensions = self.embedding_dimensions
+        current = connection.execute(
+            """SELECT atttypmod FROM pg_attribute
+               WHERE attrelid = to_regclass('document_chunks') AND attname = 'embedding'"""
+        ).fetchone()
+        if current is not None and first_value(current) != dimensions:
+            connection.execute("DROP TABLE document_chunks")
+        connection.execute(
+            f"""
 CREATE TABLE IF NOT EXISTS document_chunks (
     chunk_id bigserial PRIMARY KEY,
     document_id uuid NOT NULL REFERENCES document_metadata (document_id) ON DELETE CASCADE,
@@ -178,4 +194,4 @@ CREATE INDEX IF NOT EXISTS document_chunks_embedding_idx
     ON document_chunks USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS document_chunks_search_idx ON document_chunks USING gin (search_vector);
 """
-            )
+        )

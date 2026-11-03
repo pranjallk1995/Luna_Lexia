@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 
+from app.core import tenancy
 from app.core.config import AppConfig
 
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
@@ -120,11 +121,18 @@ class DriveOAuth:
     def authorization_url(self) -> str:
         if not self.configured:
             raise ValueError("Google Drive is not configured; set DRIVE_CLIENT_ID and DRIVE_CLIENT_SECRET.")
-        state = self.signer.dumps({"purpose": "drive"})
+        state = self.signer.dumps({"purpose": "drive", "user": tenancy.current()})
         url, _ = self.flow(state).authorization_url(
             access_type="offline", prompt="consent", state=state
         )
         return url
+
+    def user_of(self, state: str) -> str:
+        """Who started this sign-in, from the state only Lexia can sign."""
+        try:
+            return self.signer.loads(state, max_age=AppConfig.DRIVE_STATE_MAX_AGE_SECONDS)["user"]
+        except (BadSignature, KeyError, TypeError) as error:
+            raise PermissionError("This Google Drive sign-in link expired or was not started by Lexia.") from error
 
     def callback_response(self, callback_url: str) -> str:
         """The callback as Google sent it: behind a TLS-terminating proxy the request

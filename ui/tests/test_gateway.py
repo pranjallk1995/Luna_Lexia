@@ -9,8 +9,8 @@ from starlette.testclient import TestClient
 from config import SSOConfig, UIConfig
 from gateway import UIGateway
 
-OWNER = {"email": "owner@example.com", "email_verified": True}
-STRANGER = {"email": "other@example.com", "email_verified": True}
+OWNER = {"user_id": "owner", "email": "owner@example.com", "email_verified": True}
+STRANGER = {"user_id": "stranger", "email": "other@example.com", "email_verified": True}
 TOKEN = "t" * 32
 
 
@@ -18,7 +18,8 @@ class GatewayTestCase(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
-        self.document_dir = Path(directory.name)
+        self.document_dir = Path(directory.name) / "u_owner"
+        self.document_dir.mkdir()
         Image.new("RGB", (64, 96), "white").save(self.document_dir / "a.png")
         Image.new("RGB", (64, 96), "white").save(self.document_dir / "doc.pdf", "PDF", save_all=True, append_images=[Image.new("RGB", (64, 96), "red")])
         self.backend_requests: list[httpx.Request] = []
@@ -37,7 +38,7 @@ class GatewayTestCase(unittest.TestCase):
             return httpx.Response(200, json={"status": "ok"})
 
         config = UIConfig(
-            document_dir=self.document_dir,
+            document_dir=self.document_dir.parent,
             api_url="http://backend",
             api_token=TOKEN,
             allowed_emails=frozenset({"owner@example.com"}),

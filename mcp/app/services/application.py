@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from app.core import tenancy
 from app.core.config import AppConfig
 from app.core.models import (
     DocumentAnalysis,
@@ -863,16 +864,17 @@ class UploadLinkService:
     ) -> dict[str, Any]:
         """Store the uploaded bytes for a claimed ticket; failed attempts can retry."""
         ticket = self.store.claim(token)
-        try:
-            if ticket.replace:
-                return {
-                    "status": "replaced",
-                    **self.visible.ingest_bytes(ticket.name, data, replace=True, password=password),
-                }
-            return self.visible.upload(ticket.name or file_name, data, password)
-        except BaseException:
-            self.store.release(ticket)
-            raise
+        with tenancy.acting_as(ticket.user):
+            try:
+                if ticket.replace:
+                    return {
+                        "status": "replaced",
+                        **self.visible.ingest_bytes(ticket.name, data, replace=True, password=password),
+                    }
+                return self.visible.upload(ticket.name or file_name, data, password)
+            except BaseException:
+                self.store.release(ticket)
+                raise
 
 
 class HiddenDocumentService(DocumentCollectionService):
@@ -979,7 +981,7 @@ class LexiaService:
         # Set by the composition root: the ShowcaseSorter for the library's similarity order.
         self.showcase: Any = None
         # Background re-analysis of stored documents, e.g. after a model change.
-        self.reanalysis = Reanalysis(indexer)
+        self.reanalysis = tenancy.PerUser(lambda: Reanalysis(indexer))
 
     @staticmethod
     def document_types() -> list[dict[str, Any]]:

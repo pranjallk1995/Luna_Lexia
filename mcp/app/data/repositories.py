@@ -154,6 +154,12 @@ class DocumentRepository(Repository):
             (content_sha256,),
         )
 
+    def user_of_document_id(self, document_id: str) -> str | None:
+        """Who holds this document, for public links, which name no user."""
+        return self.database.tenants.user_with(
+            "SELECT 1 FROM document_metadata WHERE document_id::text = %s", (document_id,)
+        )
+
     def name_for_document_id(self, document_id: str) -> str | None:
         """Resolve an immutable public identifier to its current filename."""
         row = self.fetch_one(
