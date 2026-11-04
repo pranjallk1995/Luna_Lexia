@@ -475,6 +475,10 @@ question -> embedding + full-text query -> cosine similarity and text rank -> fu
 
 ## MCP tools
 
+### Web UI
+
+- `get_ui_link` - the link to open this app's web UI, to give the user; they sign in with their Luna account.
+
 ### Browse and read
 
 - `sort_documents` - arrange the library: `order="similarity"` saves an order where neighbors are about alike things, by the cosine similarity of the mean of each document's passage embeddings, and new documents are slotted in beside their closest match; `order="newest"` clears it.
