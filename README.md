@@ -146,12 +146,12 @@ balance, invoice total, and so on). Every document is tagged with its type and
 ## Luna Fiora integration
 
 Fiora reads Lexia over the shared Docker network with the private
-`LUNALEXIA_API_TOKEN`, the same way Vita reads Visia's catalog. Unlike Visia's
-image metadata, document metadata holds PANs and salaries, so **every
-metadata route requires the token**:
+`LUNALEXIA_API_TOKEN`, the same way Vita reads Visia's catalog. Document metadata
+holds PANs and salaries, so **every metadata route requires the token and names
+the person** whose documents to read:
 
 ```sh
-curl -H "Authorization: Bearer $LUNALEXIA_API_TOKEN" \
+curl -H "Authorization: Bearer $LUNALEXIA_API_TOKEN" -H "X-Luna-User: <user id>" \
   "http://luna-lexia-mcp:8000/api/metadata?doc_type=payslip&doc_type=form_16&financial_year=2024-25"
 ```
 
@@ -182,6 +182,18 @@ is the one home for all of them, on port 42069: it checks which Luna stacks are
 running and opens each one with the shared sign-in. The purple line is the mood and
 beats of the track Vibia plays, which Lumia's lights follow.
 
+## Users and separate storage
+
+Each person signs in with Google and has their own space in Luna Lexia: the schema `u_<id>` in the `lunalexia` database, and the folder `u_<id>` in the `luna_lexia_document_data` volume. It is created the first time they use the app. The owner adds, disables, and deletes people at Luna Sentia's `/admin`, and can hide this app from everyone else there; see [Users and separate storage](https://github.com/pranjallk1995/Luna_Sentia#users-and-separate-storage).
+
+### Connecting an MCP client
+
+Add `https://<your lexia MCP host>/mcp` to your client, such as Claude or ChatGPT, as a custom connector using OAuth. The client signs you in with Google and shows an approval page; check the return address, then allow it. Its tools then act only on your data. A request without a valid token gets 401.
+
+Each person connects their own Google Drive, and import jobs, re-analysis, and semantic search run separately for each. Drive access needs Google's approval: while the Google client's consent screen is in Testing, add each person as a test user. Deleting someone removes their documents, public links, and stored Drive token here; they revoke the access itself in their Google account.
+
+In the code, `mcp/app/core/tenancy.py` holds who the current request or job acts for, `mcp/app/data/tenants.py` creates and removes each person's schema, and `mcp/app/transport/luna_mcp.py` checks connector tokens and the private token on `/api/` routes. Code that does not say who it acts for raises `NoUserError` rather than reading anyone's data.
+
 ## Start
 
 Start [Luna Sentia](https://github.com/pranjallk1995/Luna_Sentia) first and wait until it is healthy. Sentia runs
@@ -211,7 +223,7 @@ PAGE_IMAGES_WITH_TEXT=true
 DOCLING_DEVICE=auto
 LUNALEXIA_PUBLIC_BASE_URL=
 LUNALEXIA_API_TOKEN=replace-with-a-random-value-of-at-least-32-characters
-LUNALEXIA_ALLOWED_EMAILS=you@example.com
+LUNALEXIA_ALLOWED_EMAILS=*
 MCP_PUBLIC_URL=http://localhost:18004
 ```
 
@@ -232,8 +244,8 @@ Lexia's UI needs no Google client of its own. Set in `.env`:
   Sentia's `.env`), for example `https://auth.lunaapps.fyi`.
 - `LUNA_SSO_INTERNAL_URL`: `http://luna-sentia-auth:8000`, where Lexia checks
   sessions over `luna_sentia_network`.
-- `LUNALEXIA_ALLOWED_EMAILS`: the accounts allowed into Lexia, checked
-  after Sentia confirms who is signed in.
+- `LUNALEXIA_ALLOWED_EMAILS`: who may use Lexia among the people with a Luna account: `*`
+  for everyone, or a comma-separated list. Checked after Sentia confirms who is signed in.
 
 Sentia's auth service must be healthy before Lexia can sign anyone in; see
 [Single sign-on](https://github.com/pranjallk1995/Luna_Sentia#single-sign-on) for its setup.
@@ -251,7 +263,7 @@ parsing works without internet access.
 
 - UI: <http://127.0.0.1:18505>
 - Service health: <http://127.0.0.1:18004/health>
-- MCP endpoint: <http://127.0.0.1:18004/mcp>
+- MCP endpoint: <http://127.0.0.1:18004/mcp> (clients sign in; see Connecting an MCP client)
 
 | Setting | Default |
 | --- | --- |
