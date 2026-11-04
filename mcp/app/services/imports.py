@@ -31,7 +31,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from app.core import tenancy
 from app.core.schemas import document_type
 from app.data.repositories import ImportRepository, Row
-from app.integrations.drive import DriveClient, DriveFile, DriveOAuth
+from app.integrations.drive import DriveSignInExpired, DriveClient, DriveFile, DriveOAuth
 from app.integrations.remote import DocumentSourceResolver
 
 logger = logging.getLogger(__name__)
@@ -311,7 +311,18 @@ class ImportService:
             "connected": connection is not None,
             "email": connection["email"] if connection else None,
             "connected_at": connection["connected_at"] if connection else None,
+            "sign_in_expired": connection is not None and self.sign_in_expired(),
         }
+
+    def sign_in_expired(self) -> bool:
+        """Ask Google whether the saved sign-in still works; other trouble is not an expiry."""
+        try:
+            self.drive().account_email()
+        except DriveSignInExpired:
+            return True
+        except Exception as error:  # noqa: BLE001 - an outage must not look like a lost sign-in
+            logger.warning("Could not check the Google Drive sign-in: %s", type(error).__name__)
+        return False
 
     def authorization_url(self) -> str:
         if self.cipher is None:
@@ -334,7 +345,7 @@ class ImportService:
         try:
             token = self.cipher.decrypt(connection["encrypted_refresh_token"].encode()).decode()
         except InvalidToken as error:
-            raise ValueError("The stored Drive token cannot be read; connect Google Drive again.") from error
+            raise DriveSignInExpired("The saved Google Drive sign-in cannot be read. Reconnect Google Drive from Lexia's upload dialog to continue; your documents are safe.") from error
         return self.drive_factory(token)
 
     def connected_drive(self) -> DriveClient | None:

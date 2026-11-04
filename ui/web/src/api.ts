@@ -195,7 +195,7 @@ export function useDocumentTypes() {
 
 // Google Drive and bulk imports
 
-export type DriveStatus = { configured: boolean; connected: boolean; email?: string };
+export type DriveStatus = { configured: boolean; connected: boolean; email?: string; sign_in_expired?: boolean };
 export type DriveFolder = { folder_id: string; name: string };
 
 export type ImportItem = {

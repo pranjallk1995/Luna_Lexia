@@ -40,6 +40,13 @@ FOLDER_LINK = re.compile(r"/folders/([A-Za-z0-9_-]{10,})")
 DRIVE_ID = re.compile(r"[A-Za-z0-9_-]{25,}")
 
 
+class DriveSignInExpired(ValueError):
+    """Google no longer accepts the saved sign-in; the person has to connect Drive again."""
+
+    def __init__(self, message: str = "Your Google Drive sign-in has expired. Reconnect Google Drive from Lexia's upload dialog to continue; your documents are safe.") -> None:
+        super().__init__(message)
+
+
 @dataclass(frozen=True)
 class DriveFile:
     """One Drive file and where it sits under the imported folder."""
@@ -168,9 +175,21 @@ class DriveClient:
 
     @classmethod
     def from_refresh_token(cls, refresh_token: str, client_id: str, client_secret: str) -> DriveClient:
+        from google.auth.exceptions import RefreshError
         from google.oauth2.credentials import Credentials
 
-        credentials = Credentials(
+        class RenewingCredentials(Credentials):
+            """Credentials that say plainly when Google has expired or revoked the sign-in."""
+
+            def refresh(self, request) -> None:
+                try:
+                    super().refresh(request)
+                except RefreshError as error:
+                    if "invalid_grant" in str(error):
+                        raise DriveSignInExpired() from error
+                    raise
+
+        credentials = RenewingCredentials(
             None,
             refresh_token=refresh_token,
             token_uri=AppConfig.GOOGLE_TOKEN_URI,

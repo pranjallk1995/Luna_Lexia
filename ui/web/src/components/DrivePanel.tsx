@@ -29,14 +29,14 @@ const OUTCOME_ICONS: Record<string, string> = {
 
 const outcomeLabel = (outcome: string) => outcome.replace(/_/g, " ");
 
-function Connect({ enabled }: { enabled: boolean }) {
+function Connect({ enabled, label = "Connect Google Drive" }: { enabled: boolean; label?: string }) {
   const link = useDriveLink(enabled);
   if (link.error) return <p className="lv-alert lv-alert-error">{messageOf(link.error, "Could not start the Google sign-in.")}</p>;
   return (
     <>
       <a className={link.data ? "lv-button lv-button-wide" : "lv-button lv-button-wide lx-disabled"} href={link.data?.url} target="_blank" rel="noopener">
         <HardDriveDownload size={17} />
-        Connect Google Drive
+        {label}
       </a>
       <p className="lv-caption">Read-only access. After signing in, close that tab and reopen this dialog.</p>
     </>
@@ -269,7 +269,16 @@ export function DrivePanel({ settings }: { settings: Settings }) {
           <CloudOff size={16} />
         </button>
       </div>
-      <Import refreshJobs={refreshJobs} />
+      {status.data.sign_in_expired ? (
+        <div className="lv-form">
+          <p className="lv-alert lv-alert-error">
+            Your Google Drive sign-in has expired. Reconnect to keep importing. Your documents and past imports are safe.
+          </p>
+          <Connect enabled label="Reconnect Google Drive" />
+        </div>
+      ) : (
+        <Import refreshJobs={refreshJobs} />
+      )}
       <h3 className="lx-jobs-title">Recent imports</h3>
       {jobs.error && <p className="lv-caption">Import progress is unavailable right now.</p>}
       {jobs.data && !jobs.data.length && <p className="lv-caption">No imports yet.</p>}

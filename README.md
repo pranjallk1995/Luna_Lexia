@@ -347,7 +347,8 @@ on that client's project:
 2. Add `<MCP_PUBLIC_URL>/api/drive/callback` to the client's redirect URIs.
 3. Set the consent screen to **In production** (in *Testing*, Google expires the token after 7 days).
 
-Then choose **Upload → Google Drive → Connect Google Drive**. Changing
+Then choose **Upload → Google Drive → Connect Google Drive**. If Google later ends the
+sign-in, Lexia says so and offers **Reconnect Google Drive**; your documents stay. Changing
 `LUNALEXIA_API_TOKEN` disconnects Drive.
 
 ### How bulk imports run and resume

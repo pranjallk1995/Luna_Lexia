@@ -506,14 +506,15 @@ class LexiaMCPTools:
         server, imports = self.server, self.service.imports
 
         @server.tool()
-        def google_drive_status() -> dict[str, Any]:
-            """Show whether Google Drive is connected, and the sign-in link when it is not.
+        async def google_drive_status() -> dict[str, Any]:
+            """Show whether Google Drive is connected, and the sign-in link when it needs one.
 
-            Give the user authorization_url to open in a browser; Lexia only ever
-            asks for read-only access to their Drive.
+            Give the user authorization_url to open in a browser, also when
+            sign_in_expired is true: Google has ended the saved sign-in, and signing in
+            again fixes it. Lexia only ever asks for read-only access to their Drive.
             """
-            status = imports.drive_status()
-            if status["configured"] and not status["connected"]:
+            status = await offload(imports.drive_status)
+            if status["configured"] and (not status["connected"] or status["sign_in_expired"]):
                 status["authorization_url"] = imports.authorization_url()
             return status
 

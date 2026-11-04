@@ -4,6 +4,7 @@ import base64
 import os
 import tempfile
 import unittest
+from unittest import mock
 import uuid
 from pathlib import Path
 from unittest.mock import patch
@@ -14,7 +15,7 @@ from fakes import FakeAnalyzer, FakeDocumentRepository, FakeParser, FakePublicUR
 from test_services import LOCKED_PASSWORD, LOCKED_PDF
 
 from app.core.config import AppConfig
-from app.integrations.drive import DriveFile, DriveOAuth
+from app.integrations.drive import DriveFile, DriveOAuth, DriveClient, DriveSignInExpired
 from app.integrations.remote import DocumentSourceResolver
 from app.services.application import LexiaService
 from app.services.imports import FileImporter, ImportJobs, ImportService
@@ -182,6 +183,7 @@ class DriveConnectionTests(ImportTestCase):
         status = self.imports.drive_status()
         self.assertEqual((status["connected"], status["email"]), (True, "me@example.com"))
         self.assertNotIn("refresh-token", self.imports_repo.connection["encrypted_refresh_token"])
+        self.tokens.clear()
         self.imports.drive_folders()
         self.assertEqual(self.tokens, ["refresh-token"])
 
@@ -201,6 +203,45 @@ class DriveConnectionTests(ImportTestCase):
         self.assertIn("drive.readonly", url)
         self.assertIn("state=", url)
         self.assertIn("access_type=offline", url)
+
+
+class ExpiredSignInTests(ImportTestCase):
+    def status_with(self, problem):
+        drive = mock.Mock()
+        drive.account_email.side_effect = problem
+        self.imports.drive_factory = lambda token: drive
+        self.connect()
+        return self.imports.drive_status()
+
+    def test_an_expired_sign_in_is_reported(self):
+        self.assertTrue(self.status_with(DriveSignInExpired())["sign_in_expired"])
+
+    def test_a_working_sign_in_is_not(self):
+        status = self.status_with(None)
+        self.assertEqual((status["connected"], status["sign_in_expired"]), (True, False))
+
+    def test_an_outage_does_not_look_like_a_lost_sign_in(self):
+        self.assertFalse(self.status_with(ConnectionError("no network"))["sign_in_expired"])
+
+    def test_no_connection_is_not_an_expiry(self):
+        self.assertFalse(self.imports.drive_status()["sign_in_expired"])
+
+    def test_googles_answer_becomes_a_plain_message(self):
+        from google.auth.exceptions import RefreshError
+        from google.oauth2.credentials import Credentials
+
+        with mock.patch("googleapiclient.discovery.build") as build:
+            DriveClient.from_refresh_token("refresh", "id", "secret")
+        credentials = build.call_args.kwargs["credentials"]
+        expired = RefreshError("invalid_grant: Token has been expired or revoked.", {"error": "invalid_grant"})
+        with mock.patch.object(Credentials, "refresh", side_effect=expired):
+            with self.assertRaises(DriveSignInExpired) as caught:
+                credentials.refresh(None)
+        self.assertIn("Reconnect Google Drive", str(caught.exception))
+        self.assertNotIn("invalid_grant", str(caught.exception))
+        other = RefreshError("temporarily_unavailable")
+        with mock.patch.object(Credentials, "refresh", side_effect=other), self.assertRaises(RefreshError):
+            credentials.refresh(None)
 
 
 class DriveFolderImportTests(ImportTestCase):

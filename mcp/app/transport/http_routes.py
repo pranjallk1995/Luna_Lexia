@@ -319,7 +319,7 @@ class LexiaHTTPRoutes:
             )
 
         async def status(request: Request):
-            return imports.drive_status()
+            return await anyio.to_thread.run_sync(imports.drive_status)
 
         async def authorization_url(request: Request):
             return {"url": imports.authorization_url()}
