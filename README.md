@@ -30,21 +30,37 @@ same way Luna Vita uses Luna Visia. MCP tools let any assistant list, search,
 read, download, upload, rename, correct, and delete documents.
 
 <p align="center">
-  <img src="docs/assets/luna-lexia-gallery.png" alt="Luna Lexia's document gallery with type, financial-year, and review tags" width="900">
+  <img src="docs/assets/luna-lexia-upload-gmail.png" alt="ChatGPT showing live Luna Lexia statistics beside Lexia's upload dialog, with tabs for this device, Google Drive, and Gmail (document previews, tags, and chat names blurred)" width="900">
 </p>
 
 The React interface lets you upload, search, view, favorite, hide, and
 correct documents; each card shows the document type, financial year, size, and
-tags, and anything that needs review is flagged.
+tags, and anything that needs review is flagged. Documents can come from this
+device, a Google Drive folder, or a Gmail search, which brings in matching
+attachments in bulk; see [Gmail import](#gmail-import). Document previews, tags, and
+chat names in the screenshot are blurred.
 
 <p align="center">
-  <img src="docs/assets/luna-lexia-chatgpt-mcp.png" alt="ChatGPT using Luna Lexia's MCP tools to copy a landlord's PAN into every rental agreement, beside the document in Lexia (names, identifiers, amounts, dates, places, and addresses blurred)" width="900">
+  <img src="docs/assets/luna-lexia-document-details.png" alt="An identity document open in Lexia, with its type, issuer, and extracted details beside it (all personal details covered)" width="900">
 </p>
 
-Any assistant connected over MCP works on the same library. Here ChatGPT, asked
-to copy the owner's PAN from one rental agreement into the others, corrects the
-extracted details of all five agreements; their review warnings clear, and the
-original PDFs are untouched. Personal details in the screenshot are blurred.
+Opening a document shows it beside everything Lexia read from it: its title,
+summary, tags, type, issuer, and each extracted field, all of which can be
+corrected. Every personal detail in the screenshot is covered.
+
+<p align="center">
+  <img src="docs/assets/luna-lexia-llm-analytics.png" alt="ChatGPT building a report of income against credit card spending for the financial year from payslips and statements in Luna Lexia, beside the document gallery (amounts, document previews, tags, and chat names blurred)" width="900">
+</p>
+
+Any assistant connected over MCP works on the same library, and because every
+document's details are structured, it can analyze across them. Asked for income
+against credit card spending this financial year, ChatGPT finds the payslips and
+card statements in Lexia and builds a monthly report across both cards, and flags
+that its card figures still need checking against individual transactions. It can
+correct them too: asked to copy the owner's PAN from one rental agreement into the
+others, ChatGPT corrects the extracted details of all five agreements, and the
+original PDFs are untouched. Amounts, document previews, tags, and chat names in
+the screenshot are blurred.
 
 > **Requires Luna Sentia, running and healthy:** Luna Lexia keeps its data in Luna Sentia's PostgreSQL (`luna-sentia-db`) and joins Sentia's `luna_sentia_network`; it has no database of its own. Start [Luna Sentia](https://github.com/pranjallk1995/Luna_Sentia) first and wait until its `postgres` and `ollama` services report healthy, as described under [Start](#start). Sentia also serves the model: Lexia uses `qwen3-vl:8b-instruct` by default, which Sentia pulls with its other models.
 
@@ -190,7 +206,7 @@ Each person signs in with Google and has their own space in Luna Lexia: the sche
 
 Add `https://<your lexia MCP host>/mcp` to your client, such as Claude or ChatGPT, as a custom connector using OAuth. The client signs you in with Google and shows an approval page; check the return address, then allow it. Its tools then act only on your data. A request without a valid token gets 401.
 
-Each person connects their own Google Drive, and import jobs, re-analysis, and semantic search run separately for each. Drive access needs Google's approval: while the Google client's consent screen is in Testing, add each person as a test user. Deleting someone removes their documents, public links, and stored Drive token here; they revoke the access itself in their Google account.
+Each person connects their own Google Drive and Gmail, and import jobs, re-analysis, and semantic search run separately for each. Drive and Gmail access need Google's approval: while the Google client's consent screen is in Testing, add each person as a test user. Deleting someone removes their documents, public links, and stored Drive and Gmail tokens here; they revoke the access itself in their Google account.
 
 In the code, `mcp/app/core/tenancy.py` holds who the current request or job acts for, `mcp/app/data/tenants.py` creates and removes each person's schema, and `mcp/app/transport/luna_mcp.py` checks connector tokens and the private token on `/api/` routes. Code that does not say who it acts for raises `NoUserError` rather than reading anyone's data.
 
@@ -380,7 +396,7 @@ a mail that fools it just leaves the PDF locked. Everything runs on Luna Sentia'
 
 ### How bulk imports run and resume
 
-Drive folder imports and bulk uploads become background jobs in
+Drive folder imports, Gmail searches, and bulk uploads become background jobs in
 `mcp/app/services/imports.py`, run one at a time because Docling and the model
 share the GPU (the next file is downloaded and parsed while the current one is
 analyzed; see [Overlapping parsing with the model](#overlapping-parsing-with-the-model)). Each file is inspected (skipped if it was imported before and is
@@ -525,7 +541,8 @@ type. The upload dialog accepts many files at once with a PDF password and an
 optional document type, and its **Google Drive** tab connects Drive, imports a
 folder, follows recent jobs (refreshing every few seconds with a progress bar,
 elapsed time, and the file being read), retries failed files, and retries
-locked PDFs with a password. It accepts PDFs, photos, and Word and Excel files.
+locked PDFs with a password. Its **Gmail** tab connects Gmail, previews a search,
+and imports what it finds, with recent jobs shown the same way. It accepts PDFs, photos, and Word and Excel files.
 
 ## Project structure
 
