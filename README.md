@@ -340,8 +340,8 @@ because the Drive client is not thread-safe.
 
 ### Google Drive import
 
-Drive import needs a Google OAuth client, set as `DRIVE_CLIENT_ID` and
-`DRIVE_CLIENT_SECRET` in `.env`; Sentia's sign-on client works. In Google Cloud,
+Drive import needs a Google OAuth client, set as `GOOGLE_CLIENT_ID` and
+`GOOGLE_CLIENT_SECRET` in `.env`; Sentia's sign-on client works. In Google Cloud,
 on that client's project:
 1. Enable the **Google Drive API**.
 2. Add `<MCP_PUBLIC_URL>/api/drive/callback` to the client's redirect URIs.
@@ -350,6 +350,33 @@ on that client's project:
 Then choose **Upload → Google Drive → Connect Google Drive**. If Google later ends the
 sign-in, Lexia says so and offers **Reconnect Google Drive**; your documents stay. Changing
 `LUNALEXIA_API_TOKEN` disconnects Drive.
+
+### Gmail import
+
+Gmail import loads every attachment of the mails a search finds, such as all your ICICI
+credit card statements. It uses the same Google client as Drive, with a separate sign-in
+that asks only for `gmail.readonly`. On that client's project:
+
+1. Enable the **Gmail API**, and add the `gmail.readonly` scope to the consent screen.
+2. Add `<MCP_PUBLIC_URL>/api/gmail/callback` to the client's redirect URIs.
+
+Then choose **Upload → Gmail → Connect Gmail**, type a
+[Gmail search](https://support.google.com/mail/answer/7190) such as
+`from:icicibank.com "credit card" statement`, check it with **Preview**, and choose
+**Import all**. Only PDFs, images, and Word and Excel files that were attached are imported, not images embedded in
+the mail, and a statement sent only as a link is not found. Files imported before are skipped.
+
+A locked PDF is tried with, in order: the password you gave, any password that already
+opened a file in this job, and what the local model works out from that mail. Banks usually
+give a rule rather than the password, so add the details it needs, such as your name, date of
+birth, and card's last digits. Each candidate is also tried in upper and lower case, and the
+model is only asked when the mail mentions a password. Files still locked are reported as `needs_password`; import again with
+better details, or enter the password on the job.
+
+Your details and the job's passwords stay in memory for the length of the job. They are not
+stored or logged, so a job a restart cuts off reports its remaining locked files as
+`needs_password`. Mail is untrusted, so the model has no tools and its answers are only tried against that one PDF:
+a mail that fools it just leaves the PDF locked. Everything runs on Luna Sentia's local model.
 
 ### How bulk imports run and resume
 
@@ -477,7 +504,10 @@ starting again after a stop or restart continues with the documents still left.
 - `google_drive_status` - whether Drive is configured and connected, and the connected account.
 - `list_drive_folders` - subfolders of My Drive or of a `parent_id`.
 - `import_drive_folder` - import a folder given as a link, ID, or exact name, optionally `recursive` and with a forced `doc_type`; returns a job.
-- `upload_documents` - bulk upload; each item has exactly one of `drive_file_id`, `document_url`, `content_base64`, or `file`, plus an optional `password` (use it to retry Drive files reported as `needs_password`).
+- `gmail_status` - whether Gmail is configured and connected, and the connected account.
+- `preview_gmail_import` - the first attachments a Gmail search finds, without importing them.
+- `import_gmail` - import every attachment a Gmail search finds, with an optional forced `doc_type`, `password`, and `password_details` for locked PDFs; returns a job.
+- `upload_documents` - bulk upload; each item has exactly one of `drive_file_id`, `gmail_attachment`, `document_url`, `content_base64`, or `file`, plus an optional `password` (use it to retry Drive or Gmail files reported as `needs_password`).
 - `get_import_job` / `list_import_jobs` - progress, the file in progress, counts per outcome, and each file's result.
 - `retry_import_job` - queue a finished job's failed files (or a folder whose listing failed) as a new job, once.
 
@@ -503,7 +533,7 @@ Lexia follows the shared Luna layout (see the Visia README):
 
 - `mcp/app/core/` - configuration, `schemas.py` (document types, extraction schemas, business rules), and domain models.
 - `mcp/app/data/` - PostgreSQL schema (with a trigger-maintained search vector), repositories, and document storage.
-- `mcp/app/integrations/` - `parsing.py` (Docling), `ollama.py` (native Ollama model for Pydantic AI), `extraction.py` (classification and extraction agents), and `remote.py` (SSRF-guarded document sources), `embeddings.py` (Sentia embeddings), and `drive.py` (Google Drive sign-in and client).
+- `mcp/app/integrations/` - `parsing.py` (Docling), `ollama.py` (native Ollama model for Pydantic AI), `extraction.py` (classification and extraction agents), and `remote.py` (SSRF-guarded document sources), `embeddings.py` (Sentia embeddings), `drive.py` (Google Drive sign-in and client), and `gmail.py` (Gmail sign-in and client).
 - `mcp/app/services/` - use cases (`application.py`), semantic search and answers (`semantic.py`), PDF handling and previews (`documents.py`), ZIP downloads, upload links, and `imports.py` (bulk import jobs and their queue).
 - `mcp/app/transport/` - MCP tools, HTTP routes, bearer authentication, and branding.
 - `ui/` - the React app in `web/` and its Starlette gateway; `documents.py` renders pages with PDFium.

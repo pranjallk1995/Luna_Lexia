@@ -1,6 +1,6 @@
-"""Bulk imports into Lexia, from Google Drive folders or batches of uploads, as background jobs.
+"""Bulk imports into Lexia, from Google Drive folders, Gmail searches, or batches of uploads, as background jobs.
 
-A job is stored with its request: a Drive folder to list, or the items to
+A job is stored with its request: a Drive folder or Gmail search to list, or the items to
 import. Once a folder is listed, its file list replaces the request, and every
 imported file is recorded with its position in that list. A job a restart cut
 off therefore resumes by itself: it skips every recorded position and starts
@@ -11,17 +11,21 @@ image, or Word or Excel file), downloaded, uploaded through Lexia's normal
 upload (so it goes through the analysis pipeline, duplicate detection, PDF
 unlocking, and Word and Excel conversion), and recorded. A
 password-protected PDF is recorded as ``needs_password`` so it can be retried
-with its password. Jobs run one at a time on a background worker, because each
+with its password. A locked Gmail attachment is first tried with the job's password,
+any password that opened an earlier file of the job, and what the model works out from
+its mail; those and the person's details stay in memory only, for the job's length, so
+one a restart cuts off reports those files as ``needs_password``. Jobs run one at a time on a background worker, because each
 file takes seconds of model time and a folder can hold dozens.
 """
 
 from __future__ import annotations
 
 import contextvars
+import itertools
 import logging
 import queue
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict
 from typing import Any
@@ -31,12 +35,15 @@ from cryptography.fernet import Fernet, InvalidToken
 from app.core import tenancy
 from app.core.schemas import document_type
 from app.data.repositories import ImportRepository, Row
+from app.core.config import AppConfig
 from app.integrations.drive import DriveSignInExpired, DriveClient, DriveFile, DriveOAuth
+from app.integrations.extraction import PasswordFinder
+from app.integrations.gmail import GmailClient, GmailDownload, GmailOAuth, GmailSignInExpired
 from app.integrations.remote import DocumentSourceResolver
 
 logger = logging.getLogger(__name__)
 
-SOURCES = ("drive_file_id", "document_url", "content_base64", "file")
+SOURCES = ("drive_file_id", "gmail_attachment", "document_url", "content_base64", "file")
 
 
 class FileImporter:
@@ -49,10 +56,21 @@ class FileImporter:
     ``run`` waits for a pending one before using Drive itself.
     """
 
-    def __init__(self, visible, sources: DocumentSourceResolver, imports: ImportRepository) -> None:
+    def __init__(
+        self,
+        visible,
+        sources: DocumentSourceResolver,
+        imports: ImportRepository,
+        password_finder: PasswordFinder | None = None,
+    ) -> None:
         self.visible = visible
         self.sources = sources
         self.imports = imports
+        self.password_finder = password_finder
+        # Set by ImportService: the connected Gmail client, or None.
+        self.gmail_provider: Callable[[], GmailClient | None] = lambda: None
+        # Each running job's password, details, and the passwords that have worked. Memory only.
+        self._secrets: dict[str, dict[str, Any]] = {}
         self._ahead: dict[tuple[str, int | None], Future] = {}
         self._fetcher = ThreadPoolExecutor(1, thread_name_prefix="lexia-import-ahead")
 
@@ -60,6 +78,8 @@ class FileImporter:
         self, item: dict[str, Any], job_id: str, drive: DriveClient | None, upcoming: dict[str, Any] | None = None
     ) -> str:
         """Import one item, fetching ``upcoming`` ahead; return the item's outcome."""
+        if item.get("gmail_attachment"):
+            return self.run_gmail(item, job_id)
         fetched = self._fetched(job_id, item.get("position"))
         file, name = None, item.get("name") or item.get("drive_file_id") or ""
         try:
@@ -95,6 +115,77 @@ class FileImporter:
             },
         )
         return outcome
+
+    def remember(self, job_id: str, password: str | None, details: str | None) -> None:
+        self._secrets[job_id] = {"password": password, "details": details, "worked": []}
+
+    def forget(self, job_id: str) -> None:
+        self._secrets.pop(job_id, None)
+
+    def run_gmail(self, item: dict[str, Any], job_id: str) -> str:
+        """Import one attachment, opening it first if it is locked; return its outcome."""
+        source_id, name = item["gmail_attachment"], item.get("name") or ""
+        try:
+            gmail = self.gmail_provider()
+            if gmail is None:
+                raise ImportSkipped("failed", "Gmail is not connected.")
+            if not item.get("password") and self.imports.already_imported("gmail", source_id, None):
+                raise ImportSkipped("skipped")
+            try:
+                download = gmail.download(source_id)
+            except Exception as error:  # noqa: BLE001 - a deleted mail is reported, not raised
+                raise ImportSkipped("failed", f"Download failed: {error}"[:500]) from error
+            name = name or download.attachment.upload_name
+            data = self.opened(download, item, job_id)
+            outcome, document_name, error = *self.upload({**item, "password": None}, name, data), None
+        except ImportSkipped as stop:
+            outcome, document_name, error = stop.outcome, None, stop.error
+        self.imports.record_item(
+            job_id,
+            {
+                "source": "gmail",
+                "source_id": source_id,
+                "content_md5": None,
+                "name": name or "(unnamed)",
+                "path": item.get("path"),
+                "outcome": outcome,
+                "document_name": document_name,
+                "error": error,
+                "position": item.get("position"),
+            },
+        )
+        return outcome
+
+    def opened(self, download: GmailDownload, item: dict[str, Any], job_id: str) -> bytes:
+        """The attachment without its password, trying the cheapest source of one first."""
+        decoder = self.visible.decoder
+        try:
+            return decoder.unlock(download.data) if decoder.detect_format(download.data) == "PDF" else download.data
+        except ValueError as error:
+            if "password" not in str(error).lower():
+                raise ImportSkipped("failed", str(error)[:500]) from error
+        secrets = self._secrets.get(job_id) or {}
+        given = [password for password in (item.get("password"), secrets.get("password")) if password]
+        for password in itertools.chain(given, list(secrets.get("worked", [])), self.guesses(download, secrets)):
+            try:
+                unlocked = decoder.unlock(download.data, password)
+            except ValueError:
+                continue
+            if "worked" in secrets and password not in secrets["worked"]:
+                secrets["worked"].insert(0, password)
+            return unlocked
+        raise ImportSkipped(
+            "needs_password",
+            "This PDF is locked, and nothing tried opened it. Give its password, or import again with "
+            "the details its mail's password rule needs, such as your name and date of birth.",
+        )
+
+    def guesses(self, download: GmailDownload, secrets: dict[str, Any]) -> Iterable[str]:
+        """What the model works out, as printed and in each case; asked only if reached."""
+        if self.password_finder is None:
+            return
+        for candidate in self.password_finder.candidates(download.attachment.subject, download.text, secrets.get("details")):
+            yield from dict.fromkeys((candidate, candidate.upper(), candidate.lower()))
 
     @staticmethod
     def drive_file(item: dict[str, Any], drive: DriveClient) -> DriveFile:
@@ -161,7 +252,8 @@ class ImportJobs:
     """Run import jobs one at a time on a background thread, resuming any a restart cut off.
 
     ``request`` is what a job was asked to do: ``{"folder_id", "recursive",
-    "doc_type", "max_items"}`` for a Drive folder, or ``{"items": [...]}``.
+    "doc_type", "max_items"}`` for a Drive folder, ``{"gmail_query", "doc_type",
+    "max_items"}`` for a Gmail search, or ``{"items": [...]}``.
     """
 
     def __init__(self, imports: ImportRepository, files: FileImporter, run_inline: bool = False) -> None:
@@ -174,8 +266,11 @@ class ImportJobs:
         self._worker: threading.Thread | None = None
         self._lock = threading.Lock()
 
-    def submit(self, kind: str, source: str, request: dict[str, Any]) -> Row:
+    def submit(
+        self, kind: str, source: str, request: dict[str, Any], password: str | None = None, details: str | None = None
+    ) -> Row:
         job_id = str(self.imports.create_job(kind, source, request)["job_id"])
+        self.files.remember(job_id, password, details)
         self._enqueue(job_id)
         return self.imports.job(job_id)
 
@@ -214,12 +309,18 @@ class ImportJobs:
                 self._queue.task_done()
 
     def _run(self, job_id: str) -> None:
+        try:
+            self._work(job_id)
+        finally:
+            self.files.forget(job_id)
+
+    def _work(self, job_id: str) -> None:
         """Start a job, or continue it past the files it already recorded."""
         request, drive = self.imports.job_request(job_id) or {}, self.drive_provider()
         if "items" not in request:
             self.imports.update_job(job_id, status="listing", started=True)
             try:
-                listed = {"items": self.plan(request, drive)}
+                listed = {"items": self.plan_gmail(request) if "gmail_query" in request else self.plan(request, drive)}
             except Exception as error:  # noqa: BLE001 - recorded on the job
                 # Kept so a retry can list the folder again.
                 self.imports.update_job(
@@ -265,6 +366,7 @@ class ImportJobs:
             or file.get("name")
             or item.get("document_url")
             or item.get("drive_file_id")
+            or item.get("gmail_attachment")
             or "upload"
         )[:300]
 
@@ -279,9 +381,28 @@ class ImportJobs:
             raise ValueError(f"One import may hold at most {limit} files; this one has {len(files)}.")
         return [{"drive_file": asdict(file), "doc_type": request.get("doc_type")} for file in files]
 
+    def plan_gmail(self, request: dict[str, Any]) -> list[dict[str, Any]]:
+        """List a Gmail search's attachments as import items."""
+        gmail = self.files.gmail_provider()
+        if gmail is None:
+            raise ValueError("Gmail is not connected.")
+        limit = request.get("max_items") or AppConfig.max_import_items
+        found = list(itertools.islice(gmail.search(request["gmail_query"]), limit + 1))
+        if len(found) > limit:
+            raise ValueError(f"One import may hold at most {limit} files; this search finds more. Narrow it, for example with after:2024/01/01.")
+        return [
+            {
+                "gmail_attachment": attachment.source_id,
+                "name": attachment.upload_name,
+                "path": f"{attachment.subject[:80]} / " if attachment.subject else None,
+                "doc_type": request.get("doc_type"),
+            }
+            for attachment in found
+        ]
+
 
 class ImportService:
-    """Connect Google Drive and queue bulk imports; the transport adapters call this."""
+    """Connect Google Drive and Gmail and queue bulk imports; the transport adapters call this."""
 
     def __init__(
         self,
@@ -291,6 +412,8 @@ class ImportService:
         encryption_key: str,
         max_items: int,
         drive_factory: Callable[[str], DriveClient] | None = None,
+        gmail_oauth: GmailOAuth | None = None,
+        gmail_factory: Callable[[str], GmailClient] | None = None,
     ) -> None:
         self.imports = imports
         self.oauth = oauth
@@ -301,6 +424,11 @@ class ImportService:
             lambda token: DriveClient.from_refresh_token(token, oauth.client_id, oauth.client_secret)
         )
         jobs.drive_provider = self.connected_drive
+        self.gmail_oauth = gmail_oauth
+        self.gmail_factory = gmail_factory or (
+            lambda token: GmailClient.from_refresh_token(token, gmail_oauth.client_id, gmail_oauth.client_secret)
+        )
+        jobs.files.gmail_provider = self.connected_gmail
 
     # Connection
 
@@ -358,6 +486,89 @@ class ImportService:
     def drive_folders(self, parent_id: str | None = None) -> list[dict]:
         return self.drive().folders(parent_id)
 
+    # Gmail
+
+    def gmail_status(self) -> dict[str, Any]:
+        connection = self.imports.gmail_connection()
+        return {
+            "configured": bool(self.gmail_oauth and self.gmail_oauth.configured and self.cipher is not None),
+            "connected": connection is not None,
+            "email": connection["email"] if connection else None,
+            "connected_at": connection["connected_at"] if connection else None,
+            "sign_in_expired": connection is not None and self.gmail_sign_in_expired(),
+        }
+
+    def gmail_sign_in_expired(self) -> bool:
+        """Ask Google whether the saved sign-in still works; other trouble is not an expiry."""
+        try:
+            self.gmail().account_email()
+        except GmailSignInExpired:
+            return True
+        except Exception as error:  # noqa: BLE001 - an outage must not look like a lost sign-in
+            logger.warning("Could not check the Gmail sign-in: %s", type(error).__name__)
+        return False
+
+    def gmail_authorization_url(self) -> str:
+        if self.gmail_oauth is None or self.cipher is None:
+            raise ValueError("Gmail is not configured; set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.")
+        return self.gmail_oauth.authorization_url()
+
+    def gmail_connect(self, callback_url: str, state: str) -> str:
+        email, refresh_token = self.gmail_oauth.exchange(callback_url, state)
+        self.imports.save_gmail_connection(email, self.cipher.encrypt(refresh_token.encode()).decode())
+        return email
+
+    def gmail_disconnect(self) -> dict[str, Any]:
+        self.imports.delete_gmail_connection()
+        return {"status": "disconnected"}
+
+    def gmail(self) -> GmailClient:
+        connection = self.imports.gmail_connection()
+        if connection is None or self.cipher is None:
+            raise ValueError("Gmail is not connected; connect it from Lexia's upload dialog first.")
+        try:
+            token = self.cipher.decrypt(connection["encrypted_refresh_token"].encode()).decode()
+        except InvalidToken as error:
+            raise GmailSignInExpired("The saved Gmail sign-in cannot be read. Reconnect Gmail from Lexia's upload dialog to continue; your documents are safe.") from error
+        return self.gmail_factory(token)
+
+    def connected_gmail(self) -> GmailClient | None:
+        """The Gmail client for a job about to run, or None when Gmail is disconnected."""
+        try:
+            return self.gmail()
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _gmail_query(query: str) -> str:
+        query = (query or "").strip()
+        if not query:
+            raise ValueError("Say which mails to look for, for example: from:icicibank.com credit card statement")
+        return query
+
+    def preview_gmail(self, query: str) -> dict[str, Any]:
+        """The first attachments a search finds, to check it before importing them."""
+        found = list(itertools.islice(self.gmail().search(self._gmail_query(query)), AppConfig.GMAIL_PREVIEW_ITEMS + 1))
+        return {
+            "query": query.strip(),
+            "attachments": [
+                {**attachment.summary(), "imported": bool(self.imports.already_imported("gmail", attachment.source_id, None))}
+                for attachment in found[: AppConfig.GMAIL_PREVIEW_ITEMS]
+            ],
+            "more": len(found) > AppConfig.GMAIL_PREVIEW_ITEMS,
+        }
+
+    def import_gmail(
+        self, query: str, doc_type: str | None = None, password: str | None = None, password_details: str | None = None
+    ) -> Row:
+        """Queue every attachment of the mails matching a Gmail search."""
+        query = self._gmail_query(query)
+        if doc_type:
+            document_type(doc_type)
+        self.gmail()
+        request = {"gmail_query": query, "doc_type": doc_type, "max_items": self.max_items}
+        return self.jobs.submit("gmail_search", f"Gmail: {query}"[:300], request, password or None, password_details or None)
+
     # Jobs
 
     def _check_count(self, count: int) -> None:
@@ -386,6 +597,8 @@ class ImportService:
                 document_type(item["doc_type"])
         if any(item.get("drive_file_id") for item in items):
             self.drive()
+        if any(item.get("gmail_attachment") for item in items):
+            self.gmail()
         return self.jobs.submit("batch_upload", f"{len(items)} upload(s)", {"items": items})
 
     def job(self, job_id: str, include_items: bool = True) -> Row:
@@ -419,9 +632,11 @@ class ImportService:
         if job["status"] == "failed" and "items" in request:
             return request  # an unexpected error stopped it; files already imported come back as duplicates
         items = request.get("retry") or [
-            {"drive_file_id": row["source_id"]} if row["source"] == "drive" else {"document_url": row["source_id"]}
+            {"drive_file_id": row["source_id"]} if row["source"] == "drive"
+            else {"gmail_attachment": row["source_id"]} if row["source"] == "gmail"
+            else {"document_url": row["source_id"]}
             for row in self.imports.items(str(job["job_id"]))
-            if row["outcome"] == "failed" and row["source"] in ("drive", "url") and row.get("source_id")
+            if row["outcome"] == "failed" and row["source"] in ("drive", "gmail", "url") and row.get("source_id")
         ]
         return {"items": items} if items else None
 
@@ -435,6 +650,8 @@ class ImportService:
             raise ValueError("This import has no failed files to retry, or was already retried.")
         if any(item.get("drive_file_id") or item.get("drive_file") for item in request.get("items", [])):
             self.drive()
+        if any(item.get("gmail_attachment") for item in request.get("items", [])) or "gmail_query" in request:
+            self.gmail()
         source = f"Retry of {job['source'].removeprefix('Retry of ')}"
         retry = self.jobs.submit(job["kind"], source, request)
         self.imports.update_job(job_id, request={"retried": str(retry["job_id"])})

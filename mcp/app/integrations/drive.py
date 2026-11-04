@@ -47,6 +47,30 @@ class DriveSignInExpired(ValueError):
         super().__init__(message)
 
 
+def renewing_credentials(refresh_token: str, client_id: str, client_secret: str, scopes: list[str], expired: type[ValueError]):
+    """Google credentials that raise ``expired`` when Google has expired or revoked the sign-in."""
+    from google.auth.exceptions import RefreshError
+    from google.oauth2.credentials import Credentials
+
+    class RenewingCredentials(Credentials):
+        def refresh(self, request) -> None:
+            try:
+                super().refresh(request)
+            except RefreshError as error:
+                if "invalid_grant" in str(error):
+                    raise expired() from error
+                raise
+
+    return RenewingCredentials(
+        None,
+        refresh_token=refresh_token,
+        token_uri=AppConfig.GOOGLE_TOKEN_URI,
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=scopes,
+    )
+
+
 @dataclass(frozen=True)
 class DriveFile:
     """One Drive file and where it sits under the imported folder."""
@@ -94,11 +118,16 @@ class DriveOAuth:
     (it holds a secret) and the callback runs in a different request than the start.
     """
 
+    SCOPES = SCOPES
+    SALT = "lexia-drive"
+    PURPOSE = "drive"
+    LABEL = "Google Drive"
+
     def __init__(self, client_id: str, client_secret: str, redirect_uri: str, state_secret: str) -> None:
         self.client_id = client_id
         self.client_secret = client_secret
         self.redirect_uri = redirect_uri
-        self.signer = URLSafeTimedSerializer(state_secret, salt="lexia-drive")
+        self.signer = URLSafeTimedSerializer(state_secret, salt=self.SALT)
         # The client is shared with the UI's sign-in, so Google may return its openid,
         # email, and profile scopes too; oauthlib would otherwise reject the extra scopes.
         os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
@@ -122,13 +151,13 @@ class DriveOAuth:
             }
         }
         return Flow.from_client_config(
-            config, scopes=SCOPES, redirect_uri=self.redirect_uri, state=state, autogenerate_code_verifier=False
+            config, scopes=self.SCOPES, redirect_uri=self.redirect_uri, state=state, autogenerate_code_verifier=False
         )
 
     def authorization_url(self) -> str:
         if not self.configured:
-            raise ValueError("Google Drive is not configured; set DRIVE_CLIENT_ID and DRIVE_CLIENT_SECRET.")
-        state = self.signer.dumps({"purpose": "drive", "user": tenancy.current()})
+            raise ValueError(f"{self.LABEL} is not configured; set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.")
+        state = self.signer.dumps({"purpose": self.PURPOSE, "user": tenancy.current()})
         url, _ = self.flow(state).authorization_url(
             access_type="offline", prompt="consent", state=state
         )
@@ -139,7 +168,7 @@ class DriveOAuth:
         try:
             return self.signer.loads(state, max_age=AppConfig.DRIVE_STATE_MAX_AGE_SECONDS)["user"]
         except (BadSignature, KeyError, TypeError) as error:
-            raise PermissionError("This Google Drive sign-in link expired or was not started by Lexia.") from error
+            raise PermissionError(f"This {self.LABEL} sign-in link expired or was not started by Lexia.") from error
 
     def callback_response(self, callback_url: str) -> str:
         """The callback as Google sent it: behind a TLS-terminating proxy the request
@@ -151,14 +180,16 @@ class DriveOAuth:
         try:
             self.signer.loads(state, max_age=AppConfig.DRIVE_STATE_MAX_AGE_SECONDS)
         except BadSignature as error:
-            raise PermissionError("This Google Drive sign-in link expired or was not started by Lexia.") from error
+            raise PermissionError(f"This {self.LABEL} sign-in link expired or was not started by Lexia.") from error
         flow = self.flow(state)
         flow.fetch_token(authorization_response=self.callback_response(callback_url))
         credentials = flow.credentials
         if not credentials.refresh_token:
             raise ValueError("Google did not return a refresh token; remove Lexia's access and connect again.")
-        email = DriveClient.from_credentials(credentials).account_email()
-        return email, credentials.refresh_token
+        return self.account_email(credentials), credentials.refresh_token
+
+    def account_email(self, credentials) -> str:
+        return DriveClient.from_credentials(credentials).account_email()
 
 
 class DriveClient:
@@ -175,29 +206,9 @@ class DriveClient:
 
     @classmethod
     def from_refresh_token(cls, refresh_token: str, client_id: str, client_secret: str) -> DriveClient:
-        from google.auth.exceptions import RefreshError
-        from google.oauth2.credentials import Credentials
-
-        class RenewingCredentials(Credentials):
-            """Credentials that say plainly when Google has expired or revoked the sign-in."""
-
-            def refresh(self, request) -> None:
-                try:
-                    super().refresh(request)
-                except RefreshError as error:
-                    if "invalid_grant" in str(error):
-                        raise DriveSignInExpired() from error
-                    raise
-
-        credentials = RenewingCredentials(
-            None,
-            refresh_token=refresh_token,
-            token_uri=AppConfig.GOOGLE_TOKEN_URI,
-            client_id=client_id,
-            client_secret=client_secret,
-            scopes=SCOPES,
+        return cls.from_credentials(
+            renewing_credentials(refresh_token, client_id, client_secret, SCOPES, DriveSignInExpired)
         )
-        return cls.from_credentials(credentials)
 
     def account_email(self) -> str:
         return self.service.about().get(fields="user(emailAddress)").execute()["user"]["emailAddress"]

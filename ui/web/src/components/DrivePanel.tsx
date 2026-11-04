@@ -127,7 +127,11 @@ function PasswordRetry({ locked, refreshJobs }: { locked: ImportItem[]; refreshJ
   const [password, setPassword] = useState("");
   const retry = async () => {
     try {
-      await drive.batch(locked.map((item) => ({ drive_file_id: item.source_id!, password })));
+      await drive.batch(
+        locked.map((item) =>
+          item.source === "gmail" ? { gmail_attachment: item.source_id!, password } : { drive_file_id: item.source_id!, password },
+        ),
+      );
       toast(`Retrying ${locked.length} locked PDF(s)`);
       setPassword("");
       refreshJobs();
@@ -191,7 +195,7 @@ function Report({ job, active, settings, refreshJobs }: { job: ImportJob; active
   );
 }
 
-function Job({ job, settings, refreshJobs }: { job: ImportJob; settings: Settings; refreshJobs: () => void }) {
+export function Job({ job, settings, refreshJobs }: { job: ImportJob; settings: Settings; refreshJobs: () => void }) {
   const toast = useToast();
   const active = ACTIVE_STATUSES.includes(job.status);
   const [open, setOpen] = useState(active);
@@ -247,7 +251,7 @@ export function DrivePanel({ settings }: { settings: Settings }) {
   if (status.error) return <p className="lv-alert lv-alert-error">{messageOf(status.error, "Could not reach Lexia.")}</p>;
   if (!status.data) return null;
   if (!status.data.configured) {
-    return <p className="lv-alert">Google Drive is not set up yet: set DRIVE_CLIENT_ID and DRIVE_CLIENT_SECRET in Lexia's .env and restart it.</p>;
+    return <p className="lv-alert">Google Drive is not set up yet: set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in Lexia's .env and restart it.</p>;
   }
   if (!status.data.connected) return <Connect enabled />;
 

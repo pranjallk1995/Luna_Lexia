@@ -387,7 +387,7 @@ class PublicURLRepository(Repository):
 
 
 class ImportRepository(Repository):
-    """The Drive connection, import jobs, and the outcome of every imported file."""
+    """The Drive and Gmail connections, import jobs, and the outcome of every imported file."""
 
     IMPORTED_OUTCOMES = ("imported", "duplicate")
 
@@ -407,6 +407,23 @@ class ImportRepository(Repository):
     def delete_drive_connection(self) -> None:
         with self.database.connect() as connection:
             connection.execute("DELETE FROM drive_connection")
+
+    def gmail_connection(self) -> Row | None:
+        return self.fetch_one("SELECT email, encrypted_refresh_token, connected_at FROM gmail_connection")
+
+    def save_gmail_connection(self, email: str, encrypted_refresh_token: str) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO gmail_connection (singleton, email, encrypted_refresh_token)
+                   VALUES (true, %s, %s)
+                   ON CONFLICT (singleton) DO UPDATE SET email = EXCLUDED.email,
+                       encrypted_refresh_token = EXCLUDED.encrypted_refresh_token, connected_at = now()""",
+                (email, encrypted_refresh_token),
+            )
+
+    def delete_gmail_connection(self) -> None:
+        with self.database.connect() as connection:
+            connection.execute("DELETE FROM gmail_connection")
 
     def create_job(self, kind: str, source: str, request: dict[str, Any]) -> Row:
         return self.fetch_one(

@@ -28,6 +28,7 @@ class FakeImportRepository:
 
     def __init__(self) -> None:
         self.connection = None
+        self.gmail = None
         self.jobs_by_id: dict[str, dict] = {}
         self.item_rows: list[dict] = []
         self.requests: dict[str, dict | None] = {}
@@ -40,6 +41,15 @@ class FakeImportRepository:
 
     def delete_drive_connection(self):
         self.connection = None
+
+    def gmail_connection(self):
+        return self.gmail
+
+    def save_gmail_connection(self, email, encrypted_refresh_token):
+        self.gmail = {"email": email, "encrypted_refresh_token": encrypted_refresh_token, "connected_at": "now"}
+
+    def delete_gmail_connection(self):
+        self.gmail = None
 
     def create_job(self, kind, source, request):
         job_id = str(uuid.uuid4())
@@ -380,11 +390,11 @@ class TransportTests(ImportTestCase):
 class DriveConfigTests(unittest.TestCase):
     def test_google_client_comes_from_the_environment(self) -> None:
         required = {"DATABASE_URL": "postgresql://db/lexia", "LUNALEXIA_API_TOKEN": "t" * 32}
-        with patch.dict(os.environ, required | {"DRIVE_CLIENT_ID": " id.apps ", "DRIVE_CLIENT_SECRET": "shh"}, clear=True):
+        with patch.dict(os.environ, required | {"GOOGLE_CLIENT_ID": " id.apps ", "GOOGLE_CLIENT_SECRET": "shh"}, clear=True):
             config = AppConfig.from_env()
-        self.assertEqual((config.drive_client_id, config.drive_client_secret), ("id.apps", "shh"))
+        self.assertEqual((config.google_client_id, config.google_client_secret), ("id.apps", "shh"))
         with patch.dict(os.environ, required, clear=True):
-            self.assertEqual(AppConfig.from_env().drive_client_id, "")
+            self.assertEqual(AppConfig.from_env().google_client_id, "")
 
     def test_encryption_key_is_a_stable_fernet_key(self) -> None:
         key = AppConfig.derive_encryption_key("t" * 32)
@@ -459,6 +469,12 @@ if __name__ == "__main__":
 class FailingFileImporter:
     """Import through the real FileImporter, but fail the named files once."""
 
+    def remember(self, job_id, password, details):
+        pass
+
+    def forget(self, job_id):
+        pass
+
     def __init__(self, files: FileImporter, failing: set[str]) -> None:
         self.files, self.failing = files, failing
 
@@ -532,6 +548,9 @@ class RetryAndProgressTests(ImportTestCase):
         files = self.imports.jobs.files
 
         class Watching:
+            def __getattr__(inner, name):
+                return getattr(files, name)
+
             def run(inner, item, job_id, drive, upcoming=None):
                 seen.append(self.imports_repo.jobs_by_id[job_id].get("current_item"))
                 return files.run(item, job_id, drive, upcoming)

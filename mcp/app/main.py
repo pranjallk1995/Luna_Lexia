@@ -9,8 +9,9 @@ from app.data.tenants import adopt_loose_files, remove_folder
 from app.transport.luna_mcp import LunaMCP
 from app.data.repositories import ChunkRepository, DocumentRepository, ImportRepository, PublicURLRepository
 from app.integrations.drive import DriveOAuth
+from app.integrations.gmail import GmailOAuth
 from app.integrations.embeddings import OllamaEmbedder
-from app.integrations.extraction import DocumentAnalyzer
+from app.integrations.extraction import DocumentAnalyzer, PasswordFinder
 from app.integrations.ollama import OllamaChat
 from app.integrations.parsing import DoclingParser
 from app.integrations.remote import DocumentSourceResolver
@@ -54,13 +55,15 @@ class LunaLexiaApplication:
             self.service.visible.decoder, config.max_document_bytes, config.max_upload_redirects
         )
         imports = ImportRepository(self.database)
-        jobs = ImportJobs(imports, FileImporter(self.service.visible, sources, imports))
+        password_finder = PasswordFinder(OllamaChat(config.ollama_url, config.document_model, config.context_tokens))
+        jobs = ImportJobs(imports, FileImporter(self.service.visible, sources, imports, password_finder))
         self.service.imports = ImportService(
             imports,
-            DriveOAuth(config.drive_client_id, config.drive_client_secret, config.drive_redirect_uri, config.api_token),
+            DriveOAuth(config.google_client_id, config.google_client_secret, config.drive_redirect_uri, config.api_token),
             jobs,
             config.token_encryption_key,
             config.max_import_items,
+            gmail_oauth=GmailOAuth(config.google_client_id, config.google_client_secret, config.gmail_redirect_uri, config.api_token),
         )
         for user_id in self.database.tenants.users():
             with tenancy.acting_as(user_id):
@@ -84,7 +87,7 @@ class LunaLexiaApplication:
             remove_user=self.remove_user,
             public_url=config.mcp_public_url or f"http://localhost:{config.port}",
             api_token=config.api_token,
-            open_paths=("/api/public/", "/api/downloads/", "/api/uploads/", "/api/drive/callback"),
+            open_paths=("/api/public/", "/api/downloads/", "/api/uploads/", "/api/drive/callback", "/api/gmail/callback"),
             host=config.host,
             port=config.port,
             icons=self.branding.mcp_icons(),

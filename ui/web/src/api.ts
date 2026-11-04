@@ -198,7 +198,11 @@ export function useDocumentTypes() {
 export type DriveStatus = { configured: boolean; connected: boolean; email?: string; sign_in_expired?: boolean };
 export type DriveFolder = { folder_id: string; name: string };
 
+export type GmailAttachment = { source_id: string; name: string; subject: string; sender: string; date: string; imported: boolean };
+export type GmailPreview = { query: string; attachments: GmailAttachment[]; more: boolean };
+
 export type ImportItem = {
+  source?: string | null;
   name: string;
   path?: string | null;
   outcome: string;
@@ -237,6 +241,18 @@ export const useDriveLink = (enabled: boolean) =>
     retry: false,
   });
 
+export const useGmailStatus = () =>
+  useQuery({ queryKey: ["gmail-status"], queryFn: () => request<DriveStatus>("/api/gmail/status"), staleTime: 0 });
+
+export const useGmailLink = () =>
+  useQuery({
+    queryKey: ["gmail-link"],
+    queryFn: () => request<{ url: string }>("/api/gmail/authorization-url"),
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
+  });
+
 export const useDriveFolders = (enabled: boolean) =>
   useQuery({
     queryKey: ["drive-folders"],
@@ -268,5 +284,12 @@ export const drive = {
   importFolder: (folder: string, recursive: boolean, docType: string | null) =>
     post<{ source: string }>("/api/imports/drive-folder", { folder, recursive, doc_type: docType }),
   retry: (jobId: string) => post<{ source: string }>(`/api/imports/${jobId}/retry`),
-  batch: (items: { drive_file_id: string; password: string }[]) => post("/api/imports/batch", { items }),
+  batch: (items: (({ drive_file_id: string } | { gmail_attachment: string }) & { password: string })[]) => post("/api/imports/batch", { items }),
+};
+
+export const gmail = {
+  disconnect: () => post("/api/gmail/disconnect"),
+  preview: (query: string) => post<GmailPreview>("/api/gmail/preview", { query }),
+  importSearch: (query: string, docType: string | null, password: string, passwordDetails: string) =>
+    post<{ source: string }>("/api/imports/gmail", { query, doc_type: docType, password, password_details: passwordDetails }),
 };

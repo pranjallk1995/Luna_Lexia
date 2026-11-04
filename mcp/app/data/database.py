@@ -82,6 +82,12 @@ CREATE TABLE IF NOT EXISTS drive_connection (
     encrypted_refresh_token text NOT NULL,
     connected_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS gmail_connection (
+    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    email text NOT NULL,
+    encrypted_refresh_token text NOT NULL,
+    connected_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS import_jobs (
     job_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     kind text NOT NULL,

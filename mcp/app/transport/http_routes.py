@@ -339,6 +339,41 @@ class LexiaHTTPRoutes:
         async def disconnect(request: Request):
             return imports.disconnect()
 
+        async def gmail_status(request: Request):
+            return await anyio.to_thread.run_sync(imports.gmail_status)
+
+        async def gmail_authorization_url(request: Request):
+            return {"url": imports.gmail_authorization_url()}
+
+        async def gmail_callback(request: Request):
+            if request.query_params.get("error"):
+                return page("Gmail was not connected", request.query_params["error"])
+            try:
+                state = request.query_params.get("state", "")
+                # Google's redirect carries no session: the signed state says who started it.
+                with tenancy.acting_as(imports.gmail_oauth.user_of(state)):
+                    email = await anyio.to_thread.run_sync(imports.gmail_connect, str(request.url), state)
+            except Exception as error:  # noqa: BLE001 - shown to the person who signed in
+                return page("Gmail was not connected", str(error))
+            return page("Gmail connected to Luna Lexia", f"Signed in as {email}. You can close this tab.")
+
+        async def gmail_disconnect(request: Request):
+            return imports.gmail_disconnect()
+
+        async def gmail_preview(request: Request):
+            payload = await self.payload(request)
+            return await anyio.to_thread.run_sync(imports.preview_gmail, payload.get("query", ""))
+
+        async def gmail_import(request: Request):
+            payload = await self.payload(request)
+            return await anyio.to_thread.run_sync(
+                imports.import_gmail,
+                payload.get("query", ""),
+                payload.get("doc_type") or None,
+                payload.get("password") or None,
+                payload.get("password_details") or None,
+            )
+
         async def folders(request: Request):
             parent = request.query_params.get("parent") or None
             return {"folders": await anyio.to_thread.run_sync(imports.drive_folders, parent)}
@@ -370,6 +405,12 @@ class LexiaHTTPRoutes:
         self.route("GET", "/api/drive/callback", callback, protected=False)
         self.route("POST", "/api/drive/disconnect", disconnect)
         self.route("GET", "/api/drive/folders", folders)
+        self.route("GET", "/api/gmail/status", gmail_status)
+        self.route("GET", "/api/gmail/authorization-url", gmail_authorization_url)
+        self.route("GET", "/api/gmail/callback", gmail_callback, protected=False)
+        self.route("POST", "/api/gmail/disconnect", gmail_disconnect)
+        self.route("POST", "/api/gmail/preview", gmail_preview)
+        self.route("POST", "/api/imports/gmail", gmail_import, 201)
         self.route("POST", "/api/imports/drive-folder", drive_folder, 201)
         self.route("POST", "/api/imports/batch", batch, 201)
         self.route("GET", "/api/imports", jobs)

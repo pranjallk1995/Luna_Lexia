@@ -121,6 +121,7 @@ class UploadItem(BaseModel):
     document_url: str | None = None
     content_base64: str | None = None
     drive_file_id: str | None = None
+    gmail_attachment: str | None = None
     password: str | None = None
     doc_type: str | None = None
 
@@ -142,13 +143,14 @@ UploadItems = Annotated[
                     "document_url": {"type": "string"},
                     "content_base64": {"type": "string"},
                     "drive_file_id": {"type": "string"},
+                    "gmail_attachment": {"type": "string"},
                     "password": {"type": "string"},
                     "doc_type": {"type": "string"},
                 },
             },
             "description": (
                 "Documents to upload. Each has exactly one source: file (a chat attachment), "
-                "document_url, content_base64, or drive_file_id; plus optional name, password, doc_type."
+                "document_url, content_base64, drive_file_id, or gmail_attachment; plus optional name, password, doc_type."
             ),
         }
     ),
@@ -539,14 +541,61 @@ class LexiaMCPTools:
             return await offload(imports.import_drive_folder, folder, recursive, doc_type)
 
         @server.tool()
+        async def gmail_status() -> dict[str, Any]:
+            """Show whether Gmail is connected, and the sign-in link when it needs one.
+
+            Give the user authorization_url to open in a browser, also when
+            sign_in_expired is true: Google has ended the saved sign-in, and signing in
+            again fixes it. Lexia only ever asks for read-only access to their Gmail.
+            """
+            status = await offload(imports.gmail_status)
+            if status["configured"] and (not status["connected"] or status["sign_in_expired"]):
+                status["authorization_url"] = imports.gmail_authorization_url()
+            return status
+
+        @server.tool()
+        async def preview_gmail_import(query: str) -> dict[str, Any]:
+            """List the first attachments a Gmail search finds, without importing anything.
+
+            query uses Gmail's search syntax, such as
+            from:icicibank.com "credit card" statement after:2024/01/01. Only mails with
+            attachments count. Check this with the user before import_gmail: a broad
+            search can pull in unrelated files.
+            """
+            return await offload(imports.preview_gmail, query)
+
+        @server.tool()
+        async def import_gmail(
+            query: str,
+            doc_type: DocTypeName | None = None,
+            password: str | None = None,
+            password_details: str | None = None,
+        ) -> dict[str, Any]:
+            """Import every PDF, image, Word, and Excel attachment of the mails a Gmail search finds, as a background job.
+
+            Use this for requests like "load all my ICICI credit card statements". query
+            uses Gmail's search syntax; preview it first with preview_gmail_import.
+            Attachments imported before are skipped, so re-running a search only adds
+            what is new. A locked PDF is tried with password, then any password that
+            opened an earlier file of this job, then what the local model works out
+            from its mail. Password rules usually need personal details: pass what the
+            user gives you in password_details, such as "Name: Asha Rao, born
+            07-03-1990, card ending 1234". Those stay in memory and are not stored.
+            Files still locked are reported as needs_password; running the import again
+            with better details retries them. Follow the job with get_import_job.
+            """
+            return await offload(imports.import_gmail, query, doc_type, password, password_details)
+
+        @server.tool()
         async def upload_documents(items: UploadItems) -> dict[str, Any]:
             """Upload many documents at once, as a background job.
 
             Each item has exactly one source: file (a chat attachment),
-            document_url, content_base64, or drive_file_id, plus an optional name,
+            document_url, content_base64, drive_file_id, or gmail_attachment, plus an optional name,
             password, and doc_type. Each file is classified and extracted like
             upload_document; follow the job with get_import_job. To retry Drive
-            files reported as needs_password, pass their drive_file_id with the password.
+            files reported as needs_password, pass their drive_file_id with the password;
+            for Gmail ones, pass their source_id as gmail_attachment.
             """
             payload = [
                 {**item.model_dump(exclude={"file"}), "file": item.file.model_dump() if item.file else None}

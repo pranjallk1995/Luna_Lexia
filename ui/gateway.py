@@ -43,9 +43,11 @@ PROXIED_ROUTES = tuple(
         ("POST", rf"/api/hidden/documents/{NAME}/(metadata|reextract)"),
         ("GET", r"/api/drive/(status|authorization-url|folders)"),
         ("POST", r"/api/drive/disconnect"),
+        ("GET", r"/api/gmail/(status|authorization-url)"),
+        ("POST", r"/api/gmail/(disconnect|preview)"),
         ("GET", r"/api/imports"),
         ("GET", rf"/api/imports/{JOB}"),
-        ("POST", r"/api/imports/(drive-folder|batch)"),
+        ("POST", r"/api/imports/(drive-folder|gmail|batch)"),
         ("POST", rf"/api/imports/{JOB}/retry"),
     )
 )

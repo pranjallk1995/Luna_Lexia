@@ -1555,3 +1555,9 @@ html:has(.lv-viewer[open]) {
     background: #1c1c1c;
   }
 }
+
+.lx-gmail-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.6rem;
+}

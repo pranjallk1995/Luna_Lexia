@@ -113,6 +113,11 @@ class ProxyTests(GatewayTestCase):
             ("GET", "/api/drive/status"),
             ("POST", "/api/drive/disconnect"),
             ("POST", "/api/imports/drive-folder"),
+            ("GET", "/api/gmail/status"),
+            ("GET", "/api/gmail/authorization-url"),
+            ("POST", "/api/gmail/disconnect"),
+            ("POST", "/api/gmail/preview"),
+            ("POST", "/api/imports/gmail"),
             ("GET", "/api/imports/12345678-1234-1234-1234-123456789012"),
             ("POST", "/api/imports/12345678-1234-1234-1234-123456789012/retry"),
         ):

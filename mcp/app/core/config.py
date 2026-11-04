@@ -20,6 +20,12 @@ class AppConfig:
     GOOGLE_AUTH_URI: ClassVar[str] = "https://accounts.google.com/o/oauth2/auth"
     GOOGLE_TOKEN_URI: ClassVar[str] = "https://oauth2.googleapis.com/token"
     DRIVE_STATE_MAX_AGE_SECONDS: ClassVar[int] = 900
+    # The most of a mail's text the model reads for a password hint, and of what it may try.
+    PASSWORD_EMAIL_CHARS: ClassVar[int] = 6_000
+    PASSWORD_DETAILS_CHARS: ClassVar[int] = 500
+    PASSWORD_CANDIDATES: ClassVar[int] = 6
+    # Attachments a Gmail preview lists before saying there are more.
+    GMAIL_PREVIEW_ITEMS: ClassVar[int] = 20
     ASSET_DIR: ClassVar[Path] = Path(__file__).resolve().parent.parent / "assets"
     DOCLING_ARTIFACTS_PATH: ClassVar[Path] = Path("/root/.cache/docling/models")
     # Docling reads on the GPU only while this much is free (a scanned page peaks near
@@ -98,9 +104,11 @@ class AppConfig:
     docling_device: str = "auto"
     # Google Drive import: a Google OAuth client and a key, derived from the API token,
     # that encrypts the stored refresh token.
-    drive_client_id: str = ""
-    drive_client_secret: str = ""
+    google_client_id: str = ""
+    google_client_secret: str = ""
     drive_redirect_uri: str = ""
+    # Gmail import uses the same Google client and key, with its own sign-in.
+    gmail_redirect_uri: str = ""
     token_encryption_key: str = ""
     # Files one Drive folder import or bulk upload may queue.
     max_import_items: int = 500
@@ -184,9 +192,10 @@ class AppConfig:
             if not (parsed_public_url.scheme == "https" or local_http) or not parsed_public_url.netloc:
                 raise RuntimeError("MCP_PUBLIC_URL must be an HTTPS URL, or HTTP on localhost.")
         return cls(
-            drive_client_id=os.getenv("DRIVE_CLIENT_ID", "").strip(),
-            drive_client_secret=os.getenv("DRIVE_CLIENT_SECRET", "").strip(),
+            google_client_id=os.getenv("GOOGLE_CLIENT_ID", "").strip(),
+            google_client_secret=os.getenv("GOOGLE_CLIENT_SECRET", "").strip(),
             drive_redirect_uri=f"{mcp_public_url or 'http://localhost:18004'}/api/drive/callback",
+            gmail_redirect_uri=f"{mcp_public_url or 'http://localhost:18004'}/api/gmail/callback",
             token_encryption_key=cls.derive_encryption_key(api_token),
             mcp_public_url=mcp_public_url,
             document_dir=Path(os.getenv("DOCUMENT_DIR", "/data/documents")),
