@@ -10,10 +10,10 @@
 ![Status: usable](https://img.shields.io/badge/Status-usable-2EA043)
 
 <p align="center">
-  <a href="docs/assets/luna-lexia-showcase.mp4"><img src="docs/assets/luna-lexia-showcase.webp" alt="From Google sign-in through Luna Unia to uploading and reading documents in Luna Lexia, using a demo account and made-up documents" width="900"></a>
+  <a href="docs/assets/luna-lexia-showcase.mp4"><img src="docs/assets/luna-lexia-showcase.webp" alt="From Google sign-in through Luna Unia to uploading and reading documents in Luna Lexia with a demo account and made-up documents, then asking a chat assistant for totals and a spending analysis through its MCP tools on the real vault" width="900"></a>
 </p>
 
-<p align="center"><em>From Google sign-in through Luna Unia to uploading and reading documents in Luna Lexia, using a demo account and made-up documents. Select it for the sharper video.</em></p>
+<p align="center"><em>From Google sign-in through Luna Unia to uploading and reading documents in Luna Lexia, using a demo account and made-up documents, then asking a chat assistant for totals and a year-over-year spending analysis from the real vault through its MCP tools. Select it for the sharper video.</em></p>
 
 ## Store, read, and search your financial documents with LLMs
 
