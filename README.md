@@ -9,6 +9,12 @@
 ![NVIDIA GPU optional](https://img.shields.io/badge/NVIDIA_GPU-optional-76B900?logo=nvidia&logoColor=white)
 ![Status: usable](https://img.shields.io/badge/Status-usable-2EA043)
 
+<p align="center">
+  <a href="docs/assets/luna-lexia-showcase.mp4"><img src="docs/assets/luna-lexia-showcase.webp" alt="From Google sign-in through Luna Unia to uploading and reading documents in Luna Lexia, using a demo account and made-up documents" width="900"></a>
+</p>
+
+<p align="center"><em>From Google sign-in through Luna Unia to uploading and reading documents in Luna Lexia, using a demo account and made-up documents. Select it for the sharper video.</em></p>
+
 ## Store, read, and search your financial documents with LLMs
 
 > **Work in progress:** Luna Lexia is a local-first and desktop-first document store under active development.
@@ -468,6 +474,10 @@ question -> embedding + full-text query -> cosine similarity and text rank -> fu
   and answering included, runs locally in Luna Sentia.
 
 ## MCP tools
+
+### Web UI
+
+- `get_ui_link` - the link to open this app's web UI, to give the user; they sign in with their Luna account.
 
 ### Browse and read
 
