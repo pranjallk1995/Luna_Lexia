@@ -6,6 +6,7 @@ import threading
 from io import BytesIO
 from pathlib import Path
 
+from app.integrations.model_usage import ModelUsage
 from app.core.models import DocumentContent
 from app.services.documents import PDFIUM_LOCK, DocumentReader
 from app.core.config import AppConfig
@@ -55,6 +56,13 @@ class DoclingParser:
         self.device = device
         self._converters: dict[str, object] = {}
         self._converter_lock = threading.Lock()
+        self.usage = ModelUsage(
+            "Docling (layout, table structure, and OCR models)", "Reads each document's pages: text, tables, and scans", self._state
+        )
+
+    def _state(self) -> tuple[bool, str]:
+        loaded = sorted(self._converters)
+        return (True, " and ".join(loaded)) if loaded else (False, f"loads on first use ({self.device})")
 
     def converter(self, device: str):
         with self._converter_lock:
@@ -148,6 +156,11 @@ class DoclingParser:
         return result.document
 
     def _docling_pages(self, data: bytes, file_format: str) -> list[str]:
+        """One document read by Docling: one call for the model monitor, whichever device it took."""
+        with self.usage.record():
+            return self._docling_pages_once(data, file_format)
+
+    def _docling_pages_once(self, data: bytes, file_format: str) -> list[str]:
         document = self._convert(data, file_format, self._device_now())
         if document is None:
             logger.warning("The GPU ran out of memory; reading this document again on the CPU.")

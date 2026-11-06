@@ -16,6 +16,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
 from app.core import tenancy
+from app.integrations import model_usage
 from app.core.models import MetadataChange
 from app.services.application import LexiaService
 from app.services.documents import display_name
@@ -140,6 +141,7 @@ class LexiaHTTPRoutes:
 
     def _register(self) -> None:
         self.route("GET", "/health", self.health, protected=False)
+        self.route("GET", "/api/models", self.models)
         self._register_icons()
         self._register_documents()
         self._register_favorites()
@@ -151,6 +153,14 @@ class LexiaHTTPRoutes:
 
     async def health(self, request: Request) -> dict:
         return {"status": "ok", "service": "luna-lexia"}
+
+    async def models(self, request: Request) -> dict:
+        """For Luna Sentia's model monitor: the models this app runs itself, outside Ollama.
+
+        They run on the home's GPU, so only the owner sees them.
+        """
+        tenancy.require_owner("Seeing the app's own models")
+        return model_usage.report("lexia")
 
     def _register_icons(self) -> None:
         branding = self.branding
