@@ -43,10 +43,14 @@ class UIConfig:
     TITLE_MAX_CHARS: ClassVar[int] = 120
     SUMMARY_MAX_CHARS: ClassVar[int] = 1000
     DOCUMENTS_PER_PAGE: ClassVar[int] = 12
+    # A bulk action is sent in batches of this many documents; the backend accepts up to 100.
+    BATCH_SIZE: ClassVar[int] = 100
     # Word and Excel files are converted to PDF by the backend and stored as PDFs.
     UPLOAD_TYPES: ClassVar[tuple[str, ...]] = ("pdf", "png", "jpg", "jpeg", "webp", "docx", "doc", "xlsx", "xls")
     DOCUMENT_EXTENSIONS: ClassVar[frozenset[str]] = frozenset({".jpeg", ".jpg", ".pdf", ".png", ".webp"})
     API_TIMEOUT_SECONDS: ClassVar[float] = 30.0
+    # A batch touches up to BATCH_SIZE documents' files and records.
+    BATCH_TIMEOUT_SECONDS: ClassVar[float] = 120.0
     IMPORT_TIMEOUT_SECONDS: ClassVar[float] = 60.0
     # Uploads and re-extraction wait for the backend's document model to read every page.
     EXTRACT_TIMEOUT_SECONDS: ClassVar[float] = 900.0

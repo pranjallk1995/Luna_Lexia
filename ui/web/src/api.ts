@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
 
 import { post, remove, request } from "./http";
+import { inBatches, type BatchFailure } from "./lib";
 
 export type Section = "view" | "favorites" | "hidden";
 
@@ -30,6 +31,7 @@ export type DocumentRecord = {
 
 export type Settings = {
   documents_per_page: number;
+  batch_size: number;
   max_tags: number;
   name_max_chars: number;
   title_max_chars: number;
@@ -49,6 +51,8 @@ export type MetadataChange = {
   extracted?: Record<string, unknown>;
   mark_reviewed?: boolean;
 };
+
+export type NamedMetadataChange = MetadataChange & { name: string };
 
 export type UploadOptions = { password?: string; doc_type?: string };
 
@@ -87,7 +91,7 @@ export function useDocuments(section: Section) {
 }
 
 /** Every change to one collection: applied on screen first, undone if the server refuses it. */
-export function useDocumentActions(section: Section) {
+export function useDocumentActions(section: Section, batchSize: number) {
   const collection = collectionOf(section);
   const client = useQueryClient();
   const key = ["documents", collection];
@@ -95,8 +99,8 @@ export function useDocumentActions(section: Section) {
 
   const refresh = () => client.invalidateQueries({ queryKey: ["documents"] });
 
-  const change = <V,>(
-    run: (variables: V) => Promise<unknown>,
+  const change = <V, R>(
+    run: (variables: V) => Promise<R>,
     apply: (documents: DocumentRecord[], variables: V) => DocumentRecord[],
   ) => ({
     mutationFn: run,
@@ -113,6 +117,52 @@ export function useDocumentActions(section: Section) {
   });
 
   const without = (documents: DocumentRecord[], name: string) => documents.filter((document) => document.name !== name);
+  const withoutAll = (documents: DocumentRecord[], names: string[]) => {
+    const leaving = new Set(names);
+    return documents.filter((document) => !leaving.has(document.name));
+  };
+
+  const sameName = (name: string) => name;
+
+  /** Post names a batch at a time to a route that changes all of a batch or none of it. */
+  const postNames = (path: string, names: string[], extra?: object) =>
+    inBatches(names, batchSize, sameName, async (batch) => {
+      await post(path, { names: batch, ...extra });
+      return [];
+    });
+
+  const deleteNames = (names: string[]) =>
+    inBatches(names, batchSize, sameName, async (batch) => {
+      const path = collection === "hidden" ? "/api/hidden/delete" : "/api/documents/delete";
+      return (await post<{ failed: BatchFailure[] }>(path, { names: batch })).failed;
+    });
+
+  const setFavorites = useMutation(
+    change(
+      ({ names, favorite }: { names: string[]; favorite: boolean }) => postNames("/api/favorites", names, { favorite }),
+      (documents, { names, favorite }) => {
+        const changing = new Set(names);
+        return documents.map((document) => (changing.has(document.name) ? { ...document, favorite } : document));
+      },
+    ),
+  );
+
+  const removeMany = useMutation(change(deleteNames, withoutAll));
+
+  const hideMany = useMutation(change((names: string[]) => postNames("/api/hidden/hide", names), withoutAll));
+
+  const restoreMany = useMutation(change((names: string[]) => postNames("/api/hidden/restore", names), withoutAll));
+
+  const updateMetadataMany = useMutation({
+    mutationFn: (changes: NamedMetadataChange[]) =>
+      inBatches(
+        changes,
+        batchSize,
+        (item) => item.name,
+        async (batch) => (await post<{ failed: BatchFailure[] }>(`${prefix}/metadata`, { changes: batch })).failed,
+      ),
+    onSettled: refresh,
+  });
 
   const setFavorite = useMutation(
     change(
@@ -124,8 +174,8 @@ export function useDocumentActions(section: Section) {
 
   const removeDocument = useMutation(
     change(
-      (name: string) =>
-        collection === "hidden" ? post("/api/hidden/delete", { names: [name] }) : remove(`/api/documents/${segment(name)}`),
+      (name: string): Promise<unknown> =>
+        collection === "hidden" ? deleteNames([name]) : remove(`/api/documents/${segment(name)}`),
       without,
     ),
   );
@@ -160,7 +210,16 @@ export function useDocumentActions(section: Section) {
     onSuccess: (saved, { name }) => merge(name, saved),
   });
 
-  return { setFavorite, remove: removeDocument, hide, restore, rename, updateMetadata, reextract };
+  return {
+    setFavorite,
+    remove: removeDocument,
+    hide, restore, rename, updateMetadata, reextract,
+    setFavorites,
+    removeMany,
+    hideMany,
+    restoreMany,
+    updateMetadataMany,
+  };
 }
 
 export type DocumentActions = ReturnType<typeof useDocumentActions>;

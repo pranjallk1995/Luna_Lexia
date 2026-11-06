@@ -345,9 +345,28 @@ class HiddenAndFavoriteTests(LexiaServiceTestCase):
         self.hidden.remove_many(["march.pdf"])
         self.assertFalse((self.root / "march.pdf").exists())
 
-    def test_hidden_remove_rejects_visible_documents(self):
-        with self.assertRaisesRegex(PermissionError, "Only hidden documents"):
-            self.hidden.remove_many(["march.pdf"])
+    def test_hidden_remove_refuses_visible_documents(self):
+        result = self.hidden.remove_many(["march.pdf"])
+        self.assertEqual(result["removed_count"], 0)
+        self.assertIn("Only hidden documents", result["failed"][0]["error"])
+        self.assertTrue((self.root / "march.pdf").is_file())
+
+    def test_visible_batch_cannot_reach_hidden_documents(self):
+        self.hidden.set_hidden(["march.pdf"], True)
+        removed = self.visible.remove_many(["march.pdf"])
+        updated = self.visible.update_metadata_many([("march.pdf", MetadataChange(add_tags=["x"]))])
+        self.assertEqual((removed["removed_count"], updated["updated_count"]), (0, 0))
+        self.assertTrue((self.root / "march.pdf").is_file())
+
+    def test_hidden_batch_metadata_stays_inside_its_collection(self):
+        self.hidden.set_hidden(["march.pdf"], True)
+        result = self.hidden.update_metadata_many([
+            ("march.pdf", MetadataChange(add_tags=["private"])),
+            ("missing.pdf", MetadataChange(add_tags=["private"])),
+        ])
+        self.assertEqual([item["name"] for item in result["updated"]], ["march.pdf"])
+        self.assertIn("private", result["updated"][0]["tags"])
+        self.assertEqual([item["name"] for item in result["failed"]], ["missing.pdf"])
 
     def test_favorites_exclude_hidden_documents(self):
         self.visible.set_favorite(["march.pdf"], True)

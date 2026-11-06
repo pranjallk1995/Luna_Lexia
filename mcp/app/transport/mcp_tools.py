@@ -830,3 +830,16 @@ class LexiaMCPTools:
         def remove_document(name: str) -> dict[str, str]:
             """Remove a non-hidden document and its persisted metadata consistently."""
             return visible.remove(name)
+
+        @server.tool()
+        async def remove_documents(names: list[str]) -> dict[str, Any]:
+            """Permanently remove up to 100 visible documents and their metadata at once.
+
+            Use exact names from list_documents, search_documents, or
+            list_document_data; for example, to clear out every statement from one
+            bank, page search_documents and pass the names here. Deletion cannot be
+            undone, so confirm the selection with the user first. Each removal is independent:
+            successes are listed under "removed" and per-document errors (such as a
+            missing or hidden name) under "failed".
+            """
+            return {"status": "deleted", **await offload(visible.remove_many, names)}

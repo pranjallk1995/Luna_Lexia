@@ -163,7 +163,8 @@ class ProxyTests(GatewayTestCase):
                 UIConfig.EXTRACT_TIMEOUT_SECONDS,
                 UIConfig.EXTRACT_TIMEOUT_SECONDS,
                 UIConfig.IMPORT_TIMEOUT_SECONDS,
-                UIConfig.API_TIMEOUT_SECONDS,
+                # Favorites can change a whole selection at once.
+                UIConfig.BATCH_TIMEOUT_SECONDS,
             ],
         )
 
@@ -180,6 +181,24 @@ class ApplicationTests(GatewayTestCase):
         self.assertEqual(self.client.get("/_stcore/health").status_code, 200)
 
 
+
+
+class BulkProxyTests(GatewayTestCase):
+    def test_bulk_routes_are_forwarded_with_a_batch_timeout(self):
+        self.sign_in()
+        self.unlock()
+        for path in ("/api/documents/delete", "/api/documents/metadata", "/api/hidden/documents/metadata", "/api/hidden/hide", "/api/favorites"):
+            self.assertEqual(self.client.post(path, json={}).status_code, 200, path)
+            self.assertEqual(self.backend_requests[-1].url.path, path)
+            self.assertEqual(self.backend_requests[-1].extensions["timeout"]["read"], UIConfig.BATCH_TIMEOUT_SECONDS)
+
+    def test_hidden_batch_edits_wait_for_the_pin(self):
+        self.sign_in()
+        self.assertEqual(self.client.post("/api/hidden/documents/metadata", json={}).status_code, 423)
+
+    def test_the_browser_learns_the_batch_size(self):
+        self.sign_in()
+        self.assertEqual(self.client.get("/auth/session").json()["settings"]["batch_size"], UIConfig.BATCH_SIZE)
 
 class HiddenPinTests(GatewayTestCase):
     """Hidden documents wait for the PIN that Luna Sentia checks."""

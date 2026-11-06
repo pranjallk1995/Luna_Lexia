@@ -1,4 +1,4 @@
-import { Download, Eye, EyeOff, Heart, MoreVertical, Trash2 } from "lucide-react";
+import { Check, Download, Eye, EyeOff, Heart, MoreVertical, Trash2 } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 
 import { downloadUrl, thumbnailUrl, type DocumentRecord, type Section } from "../api";
@@ -14,6 +14,10 @@ type Props = {
   layout: "grid" | "list";
   typeLabel: string;
   onAction: (action: CardAction, document: DocumentRecord) => void;
+  /** Whether clicking the card selects it, rather than opening it. */
+  selecting: boolean;
+  selected: boolean;
+  onSelect: (document: DocumentRecord, extend: boolean) => void;
 };
 
 function CardMenu({ document, section, onAction }: Pick<Props, "document" | "section" | "onAction">) {
@@ -82,7 +86,7 @@ function CardMenu({ document, section, onAction }: Pick<Props, "document" | "sec
   );
 }
 
-function DocumentCardBase({ document, section, layout, typeLabel, onAction }: Props) {
+function DocumentCardBase({ document, section, layout, typeLabel, onAction, selecting, selected, onSelect }: Props) {
   const name = readableName(document.name);
   const tags = visibleTags(document.tags);
   const hiddenTags = tags.length - TAGS_SHOWN[layout];
@@ -93,13 +97,26 @@ function DocumentCardBase({ document, section, layout, typeLabel, onAction }: Pr
     `${pages} page${pages === 1 ? "" : "s"}`,
     sizeLabel(document.size_bytes),
   ].filter(Boolean);
+  const stateClass = `${selecting ? " lv-card-selecting" : ""}${selected ? " lv-card-selected" : ""}`;
   return (
-    <article className={`lv-card lv-card-${layout}`}>
+    // The whole card is the target while selecting; its button gives keyboards the same click.
+    <article
+      className={`lv-card lv-card-${layout}${stateClass}`}
+      onClick={selecting ? (event) => onSelect(document, event.shiftKey) : undefined}
+    >
       <div className="lv-thumbnail">
-        <button className="lv-thumbnail-open" type="button" aria-label={`Open ${name}`} onClick={() => onAction("open", document)}>
+        <button
+          className="lv-thumbnail-open"
+          type="button"
+          role={selecting ? "checkbox" : undefined}
+          aria-checked={selecting ? selected : undefined}
+          aria-label={selecting ? `Select ${name}` : `Open ${name}`}
+          onClick={selecting ? undefined : () => onAction("open", document)}
+        >
           <img src={thumbnailUrl(document)} alt="" width={420} height={280} loading="lazy" decoding="async" />
         </button>
-        {section !== "hidden" && (
+        {selecting && <span className="lv-check">{selected && <Check size={15} strokeWidth={3} />}</span>}
+        {!selecting && section !== "hidden" && (
           <button
             className={`lv-favorite${document.favorite ? " lv-favorite-active" : ""}`}
             type="button"
@@ -132,7 +149,7 @@ function DocumentCardBase({ document, section, layout, typeLabel, onAction }: Pr
           <p className="lv-card-facts">
             {facts.join(" · ")}
           </p>
-          <CardMenu document={document} section={section} onAction={onAction} />
+          {!selecting && <CardMenu document={document} section={section} onAction={onAction} />}
         </div>
       </div>
     </article>

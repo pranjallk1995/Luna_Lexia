@@ -40,7 +40,9 @@ PROXIED_ROUTES = tuple(
         ("DELETE", rf"/api/documents/{NAME}"),
         ("POST", rf"/api/documents/{NAME}/(rename|metadata|reextract)"),
         ("POST", r"/api/favorites"),
+        ("POST", r"/api/documents/(delete|metadata)"),
         ("POST", r"/api/hidden/(hide|restore|delete)"),
+        ("POST", r"/api/hidden/documents/metadata"),
         ("POST", rf"/api/hidden/documents/{NAME}/(metadata|reextract)"),
         ("GET", r"/api/drive/(status|authorization-url|folders)"),
         ("POST", r"/api/drive/disconnect"),
@@ -57,6 +59,8 @@ IMPORTING = re.compile(r"/api/imports/.*")
 # Changes to hidden items, which wait for the PIN. Hiding a visible item does not.
 HIDDEN_CHANGES = re.compile(r"/api/hidden/(?!hide\Z).+")
 SENTIA_AWAY = "Luna Sentia, which checks your PIN, is unavailable. Please try again."
+# Routes that touch a whole batch, so they get longer than one item's change.
+BATCH_ROUTES = re.compile(r"/api/(favorites|documents/(delete|metadata)|hidden/(hide|restore|delete|documents/metadata))")
 UNAVAILABLE = "Luna Lexia's backend is unavailable. Please try again."
 
 
@@ -149,6 +153,7 @@ class UIGateway:
                 "logout_url": logout_url,
                 "settings": {
                     "documents_per_page": UIConfig.DOCUMENTS_PER_PAGE,
+                    "batch_size": UIConfig.BATCH_SIZE,
                     "max_tags": UIConfig.MAX_TAGS,
                     "name_max_chars": UIConfig.NAME_MAX_CHARS,
                     "title_max_chars": UIConfig.TITLE_MAX_CHARS,
@@ -274,6 +279,8 @@ class UIGateway:
 
     @staticmethod
     def timeout(method: str, path: str) -> float:
+        if method == "POST" and BATCH_ROUTES.fullmatch(path):
+            return UIConfig.BATCH_TIMEOUT_SECONDS
         if method == "POST" and EXTRACTING.fullmatch(path):
             return UIConfig.EXTRACT_TIMEOUT_SECONDS
         if method == "POST" and IMPORTING.fullmatch(path):

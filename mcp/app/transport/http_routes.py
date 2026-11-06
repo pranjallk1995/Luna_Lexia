@@ -82,6 +82,26 @@ class LexiaHTTPRoutes:
             mark_reviewed=mark_reviewed,
         )
 
+    @classmethod
+    async def metadata_changes(cls, request: Request) -> list[tuple[str, MetadataChange]]:
+        """Parse ``{"changes": [{"name", "title", "summary", "add_tags", "remove_tags", ...}, ...]}``."""
+        changes = (await cls.payload(request)).get("changes")
+        if not isinstance(changes, list) or not all(
+            isinstance(change, dict) and isinstance(change.get("name"), str) for change in changes
+        ):
+            raise ValueError("changes must be a list of objects that each have a name.")
+        parsed = []
+        for change in changes:
+            mark_reviewed = change.get("mark_reviewed", False)
+            extracted = change.get("extracted")
+            if not isinstance(mark_reviewed, bool) or (extracted is not None and not isinstance(extracted, dict)):
+                raise ValueError("mark_reviewed must be true or false, and extracted an object.")
+            parsed.append((change["name"], MetadataChange(
+                title=change.get("title"), summary=change.get("summary"), add_tags=change.get("add_tags"),
+                remove_tags=change.get("remove_tags"), extracted=extracted, mark_reviewed=mark_reviewed,
+            )))
+        return parsed
+
     @staticmethod
     def name(request: Request) -> str:
         return request.path_params["name"]
@@ -223,12 +243,22 @@ class LexiaHTTPRoutes:
                 visible.reextract, self.name(request), payload.get("doc_type") or None
             )
 
+        async def delete_many(request: Request):
+            names = (await self.payload(request)).get("names", [])
+            return await anyio.to_thread.run_sync(visible.remove_many, names)
+
+        async def update_metadata_many(request: Request):
+            changes = await self.metadata_changes(request)
+            return await anyio.to_thread.run_sync(visible.update_metadata_many, changes)
+
         self.route("GET", "/api/metadata", metadata)
         self.route("GET", "/api/document-types", document_types)
         self.route("GET", "/api/documents/{name}", details)
         self.route("GET", "/api/documents/{name}/text", text)
         self.route("GET", "/api/public/documents/{name}", public_document, protected=False)
         self.route("POST", "/api/documents", upload, 201)
+        self.route("POST", "/api/documents/delete", delete_many)
+        self.route("POST", "/api/documents/metadata", update_metadata_many)
         self.route("DELETE", "/api/documents/{name}", delete)
         self.route("POST", "/api/documents/{name}/rename", rename)
         self.route("POST", "/api/documents/{name}/metadata", update_metadata)
@@ -436,16 +466,25 @@ class LexiaHTTPRoutes:
                 hidden.reextract, self.name(request), payload.get("doc_type") or None
             )
 
+        async def update_metadata_many(request: Request):
+            changes = await self.metadata_changes(request)
+            return await anyio.to_thread.run_sync(hidden.update_metadata_many, changes)
+
+        # Off the event loop: a long selection means many file and database touches.
         async def hide(request: Request):
-            return hidden.set_hidden((await self.payload(request)).get("names", []), True)
+            names = (await self.payload(request)).get("names", [])
+            return await anyio.to_thread.run_sync(hidden.set_hidden, names, True)
 
         async def restore(request: Request):
-            return hidden.set_hidden((await self.payload(request)).get("names", []), False)
+            names = (await self.payload(request)).get("names", [])
+            return await anyio.to_thread.run_sync(hidden.set_hidden, names, False)
 
         async def delete(request: Request):
-            return hidden.remove_many((await self.payload(request)).get("names", []))
+            names = (await self.payload(request)).get("names", [])
+            return await anyio.to_thread.run_sync(hidden.remove_many, names)
 
         self.route("GET", "/api/hidden/documents", documents)
+        self.route("POST", "/api/hidden/documents/metadata", update_metadata_many)
         self.route("POST", "/api/hidden/documents/{name}/metadata", update_metadata)
         self.route("POST", "/api/hidden/documents/{name}/reextract", reextract)
         self.route("POST", "/api/hidden/hide", hide)

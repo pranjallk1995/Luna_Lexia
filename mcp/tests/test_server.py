@@ -233,6 +233,57 @@ class MCPToolTests(ServerTestCase):
         self.assertLess(asyncio.run(scenario()), 0.3)
 
 
+class BulkRouteTests(ServerTestCase):
+    """The web UI's Select mode: many documents changed or deleted in one request."""
+
+    def test_batch_metadata_reports_each_document(self) -> None:
+        with self.client() as client:
+            response = client.post("/api/documents/metadata", headers=AUTH, json={"changes": [
+                {"name": "one.pdf", "add_tags": ["tax"], "summary": "A corrected summary", "mark_reviewed": True},
+                {"name": "missing.pdf", "add_tags": ["tax"]},
+            ]})
+        body = response.json()
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("tax", body["updated"][0]["tags"])
+        self.assertEqual(body["failed"][0]["name"], "missing.pdf")
+
+    def test_batch_metadata_rejects_a_malformed_body(self) -> None:
+        with self.client() as client:
+            for changes in (None, "one.pdf", [{"summary": "No name"}], ["one.pdf"], [{"name": "one.pdf", "mark_reviewed": "yes"}]):
+                with self.subTest(changes=changes):
+                    response = client.post("/api/documents/metadata", headers=AUTH, json={"changes": changes})
+                    self.assertEqual(response.status_code, 400)
+
+    def test_batch_delete_removes_files_and_reports_the_rest(self) -> None:
+        with self.client() as client:
+            self.assertEqual(client.post("/api/documents/delete", json={"names": ["one.pdf"]}).status_code, 401)
+            response = client.post("/api/documents/delete", headers=AUTH, json={"names": ["one.pdf", "missing.pdf"]})
+        self.assertEqual(response.json()["removed"], ["one.pdf"])
+        self.assertEqual(response.json()["failed"][0]["name"], "missing.pdf")
+        self.assertFalse((self.root / "one.pdf").exists())
+
+    def test_batches_refuse_more_than_a_hundred(self) -> None:
+        with self.client() as client:
+            response = client.post("/api/documents/delete", headers=AUTH, json={"names": [f"{i}.pdf" for i in range(101)]})
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue((self.root / "one.pdf").is_file())
+
+    def test_hidden_batches(self) -> None:
+        body = {"changes": [{"name": "one.pdf", "add_tags": ["private"]}]}
+        with self.client() as client:
+            client.post("/api/hidden/hide", headers=AUTH, json={"names": ["one.pdf"]})
+            updated = client.post("/api/hidden/documents/metadata", headers=AUTH, json=body)
+            deleted = client.post("/api/hidden/delete", headers=AUTH, json={"names": ["one.pdf", "two.pdf"]})
+        self.assertEqual(updated.json()["updated_count"], 1)
+        self.assertEqual(deleted.json()["removed"], ["one.pdf"])
+        self.assertEqual(deleted.json()["failed"][0]["name"], "two.pdf")
+
+    def test_remove_documents_tool(self) -> None:
+        result = self.call("remove_documents", {"names": ["one.pdf", "missing.pdf"]})
+        self.assertEqual((result["status"], result["removed"]), ("deleted", ["one.pdf"]))
+        self.assertEqual(result["failed"][0]["name"], "missing.pdf")
+
+
 class HTTPRouteTests(ServerTestCase):
     def test_health_is_open_and_metadata_requires_token(self) -> None:
         with self.client() as client:

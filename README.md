@@ -7,7 +7,7 @@
 ![PostgreSQL in Luna Sentia](https://img.shields.io/badge/PostgreSQL-in_Luna_Sentia-4169E1?logo=postgresql&logoColor=white)
 ![Docling included](https://img.shields.io/badge/Docling-included-5A3FC0)
 ![NVIDIA GPU optional](https://img.shields.io/badge/NVIDIA_GPU-optional-76B900?logo=nvidia&logoColor=white)
-![Status: v1.1](https://img.shields.io/badge/Status-v1.1-2EA043)
+![Status: v1.2](https://img.shields.io/badge/Status-v1.2-2EA043)
 
 <p align="center">
   <a href="docs/assets/luna-lexia-showcase.mp4"><img src="docs/assets/luna-lexia-showcase.webp" alt="From Google sign-in through Luna Unia to uploading and reading documents in Luna Lexia with a demo account and made-up documents, then asking a chat assistant for totals and a spending analysis through its MCP tools on the real vault" width="900"></a>
@@ -502,7 +502,7 @@ question -> embedding + full-text query -> cosine similarity and text rank -> fu
 - `reextract_document` - classify and extract again, optionally forcing a `doc_type`.
 - `update_document_metadata` / `update_documents_metadata` - edit titles, summaries, and tags; correct `extracted` fields (validated against the type's schema, with key facts and review flags recomputed); `mark_reviewed=true` clears review flags once a person confirms the details.
 - `rename_document` / `rename_documents` - rename while keeping the immutable ID and public URL.
-- `set_favorite_documents`, `remove_document`, `set_public_base_url`.
+- `set_favorite_documents`, `remove_document`, `remove_documents` (up to 100 at once, each reported on its own), `set_public_base_url`.
 
 ### Re-analysis after a model or schema change
 
@@ -540,6 +540,16 @@ starting again after a stop or restart continues with the documents still left.
 Hidden documents are never reachable through MCP tools. In the web UI they wait for
 your [hidden-items PIN](https://github.com/pranjallk1995/Luna_Sentia#hidden-items-pin): it unlocks them until you leave the tab or stay idle for 10 minutes,
 and while they are locked their pages, thumbnails, and files are refused too.
+
+**Select** picks many documents across pages and searches: click, shift-click a range,
+or **Select all**. A bar then favorites, unfavorites, hides, restores, or deletes them
+together, or edits them together: add and remove tags, find and replace text in
+summaries, give them all one summary, or mark the ones that need review as reviewed.
+Documents that could not be changed are reported and stay selected. These requests send
+at most 100 documents each to `POST /api/documents/delete`, `/api/documents/metadata`,
+`/api/hidden/delete`, and `/api/hidden/documents/metadata`, and each document is applied
+on its own: results come back under `removed` or `updated`, and per-document errors
+under `failed`.
 
 ## Web UI
 
