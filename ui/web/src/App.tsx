@@ -3,6 +3,7 @@ import { useState } from "react";
 
 import type { Section, Settings } from "./api";
 import { Gallery } from "./components/Gallery";
+import { HiddenGate } from "./components/HiddenGate";
 import { Brand, ForbiddenPage, SignInPage, UnreachablePage } from "./components/Gate";
 import { UploadDialog } from "./components/UploadDialog";
 import { useSession } from "./http";
@@ -87,7 +88,13 @@ function Workspace({ logoutUrl, settings }: { logoutUrl: string; settings: Setti
         ))}
       </nav>
 
-      <Gallery key={section} section={section} layout={layout} settings={settings} />
+      {section === "hidden" ? (
+        <HiddenGate noun="documents">
+          <Gallery key={section} section={section} layout={layout} settings={settings} />
+        </HiddenGate>
+      ) : (
+        <Gallery key={section} section={section} layout={layout} settings={settings} />
+      )}
 
       {uploading && <UploadDialog uploads={uploads} settings={settings} onClose={() => setUploading(false)} />}
     </main>

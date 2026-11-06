@@ -7,7 +7,7 @@
 ![PostgreSQL in Luna Sentia](https://img.shields.io/badge/PostgreSQL-in_Luna_Sentia-4169E1?logo=postgresql&logoColor=white)
 ![Docling included](https://img.shields.io/badge/Docling-included-5A3FC0)
 ![NVIDIA GPU optional](https://img.shields.io/badge/NVIDIA_GPU-optional-76B900?logo=nvidia&logoColor=white)
-![Status: v1.0](https://img.shields.io/badge/Status-v1.0-2EA043)
+![Status: v1.1](https://img.shields.io/badge/Status-v1.1-2EA043)
 
 <p align="center">
   <a href="docs/assets/luna-lexia-showcase.mp4"><img src="docs/assets/luna-lexia-showcase.webp" alt="From Google sign-in through Luna Unia to uploading and reading documents in Luna Lexia with a demo account and made-up documents, then asking a chat assistant for totals and a spending analysis through its MCP tools on the real vault" width="900"></a>
@@ -537,12 +537,14 @@ starting again after a stop or restart continues with the documents still left.
 - `get_import_job` / `list_import_jobs` - progress, the file in progress, counts per outcome, and each file's result.
 - `retry_import_job` - queue a finished job's failed files (or a folder whose listing failed) as a new job, once.
 
-Hidden documents are never reachable through MCP tools.
+Hidden documents are never reachable through MCP tools. In the web UI they wait for
+your [hidden-items PIN](https://github.com/pranjallk1995/Luna_Sentia#hidden-items-pin): it unlocks them until you leave the tab or stay idle for 10 minutes,
+and while they are locked their pages, thumbnails, and files are refused too.
 
 ## Web UI
 
 The React UI mirrors Visia: grid and list galleries with search,
-favorites, sign-in-gated hidden documents, downloads, renames, and deletion.
+favorites, hidden documents behind your [hidden-items PIN](https://github.com/pranjallk1995/Luna_Sentia#hidden-items-pin), downloads, renames, and deletion.
 Cards show the top of the first page, the document type, financial year, page
 count, and a `needs review` badge. The document dialog shows the pages beside
 the editable title, summary, and tags; review flags with a **Mark reviewed**
