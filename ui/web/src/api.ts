@@ -30,6 +30,7 @@ export type DocumentRecord = {
 };
 
 export type Settings = {
+  version: string;
   documents_per_page: number;
   batch_size: number;
   max_tags: number;
