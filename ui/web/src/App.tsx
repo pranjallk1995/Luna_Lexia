@@ -97,7 +97,7 @@ function Workspace({ logoutUrl, settings }: { logoutUrl: string; settings: Setti
       )}
 
       {uploading && <UploadDialog uploads={uploads} settings={settings} onClose={() => setUploading(false)} />}
-      <footer className="lv-footer">Luna Lexia · v{settings.version}</footer>
+      <footer className="lv-footer">Luna Lexia{settings.version && ` · v${settings.version}`}</footer>
     </main>
   );
 }
