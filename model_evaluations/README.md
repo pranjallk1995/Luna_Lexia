@@ -6,11 +6,18 @@ kept out of git in `results/` (see `.gitignore`).
 
 ## Last evaluation
 
+`results/2026-11-10_qwen3-vl-vs-qwen3.5-9b/`: `qwen3-vl:8b-instruct` against
+`qwen3.5:9b`, same code, on the 89 documents of the evaluation before it. **Not adopted**:
+the 9B fixes two of the regressions below (PF amounts on payslips, ID numbers) and
+gets more rent-agreement landlords right, but leaves fields empty that the 8B fills:
+Form 16 employer PAN (4 of 5), net and gross pay on 2 payslips, bank account digits on 11,
+and rent agreements' dates, lock-in and registration. It is about 25 % faster.
+`report.md` has the tables.
+
 `results/2026-10-28_qwen2.5vl-vs-qwen3-vl/`: `qwen2.5vl:7b` (text only) against
 `qwen3-vl:8b-instruct` (page images beside the text, identifier retries), on 89
-documents. `report.md` has the verdict and the best and worst examples;
-`scores.json` has per-document scores. The new model was adopted for Lexia,
-Visia, and Fiora. Known regressions to fix before the next model change:
+documents. The new model was adopted for Lexia, Visia, and Fiora. Known regressions,
+still open with `qwen3-vl:8b-instruct`:
 
 - `employee_provident_fund` and `pay_period` often null on payslips.
 - Rent agreements: landlord and tenant swapped, `agreement_to` equal to `agreement_from`.
