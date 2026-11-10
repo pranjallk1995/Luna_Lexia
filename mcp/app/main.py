@@ -13,7 +13,7 @@ from app.integrations.gmail import GmailOAuth
 from app.integrations.embeddings import OllamaEmbedder
 from app.integrations.extraction import DocumentAnalyzer, PasswordFinder
 from app.integrations.ollama import OllamaChat
-from app.integrations.parsing import DoclingParser
+from app.integrations.parsing import IdleDoclingParser
 from app.integrations.remote import DocumentSourceResolver
 from app.services.application import LexiaService
 from app.services.documents import DocumentReader
@@ -40,7 +40,7 @@ class LunaLexiaApplication:
                 config,
                 DocumentRepository(self.database),
                 PublicURLRepository(self.database),
-                DoclingParser(reader, config.max_stored_text_chars, config.docling_device),
+                IdleDoclingParser(reader, config.max_stored_text_chars, config.docling_device),
                 DocumentAnalyzer(
                     OllamaChat(config.ollama_url, config.document_model, config.context_tokens),
                     reader,

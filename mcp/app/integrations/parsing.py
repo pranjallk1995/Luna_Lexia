@@ -6,6 +6,7 @@ import threading
 from io import BytesIO
 from pathlib import Path
 
+from app.integrations.gpu_worker import IdleWorker
 from app.integrations.model_usage import ModelUsage
 from app.core.models import DocumentContent
 from app.services.documents import PDFIUM_LOCK, DocumentReader
@@ -220,3 +221,45 @@ class DoclingParser:
             logger.exception("Docling could not parse the document; using the PDF text layer.")
             pages = self.reader.text_layer(data) if file_format == "PDF" else [""]
             return DocumentContent(file_format, self._bounded(pages), self.FALLBACK_NAME)
+
+
+def _docling_parser(max_text_chars: int, device: str) -> DoclingParser:
+    """The parser as the worker process builds it, with its own document reader."""
+    return DoclingParser(DocumentReader(), max_text_chars, device)
+
+
+class IdleDoclingParser:
+    """``DoclingParser`` in its own process, which exits after ``idle_seconds`` unused.
+
+    A batch of imports loads Docling's models once and reads every document; a few
+    minutes after the last one the process ends and the GPU is fully free again (see
+    gpu_worker.py). If the process cannot start or dies, the PDF text layer is used,
+    as when Docling itself fails.
+    """
+
+    NAME = DoclingParser.NAME
+    FALLBACK_NAME = DoclingParser.FALLBACK_NAME
+
+    def __init__(self, reader: DocumentReader, max_text_chars: int, device: str = "auto",
+                 idle_seconds: float = AppConfig.GPU_MODEL_IDLE_SECONDS) -> None:
+        self.reader = reader
+        self.max_text_chars = max_text_chars
+        self.device = device
+        self.worker = IdleWorker(_docling_parser, (max_text_chars, device), idle_seconds=idle_seconds)
+        self.usage = ModelUsage(
+            "Docling (layout, table structure, and OCR models)", "Reads each document's pages: text, tables, and scans", self._state
+        )
+
+    def _state(self) -> tuple[bool, str]:
+        if self.worker.alive:
+            return True, f"{self.device} (own process)"
+        return False, f"loads on first use ({self.device}); unloads after {self.worker.idle_seconds:.0f} s idle"
+
+    def parse(self, data: bytes, file_format: str) -> DocumentContent:
+        with self.usage.record():
+            try:
+                return self.worker.call("parse", data, file_format)
+            except Exception:
+                logger.exception("Docling's process failed; using the PDF text layer.")
+                pages = self.reader.text_layer(data) if file_format == "PDF" else [""]
+                return DocumentContent(file_format, DoclingParser._bounded(self, pages), self.FALLBACK_NAME)

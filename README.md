@@ -101,7 +101,9 @@ review.
   text layer is used so an upload is never lost. Docling pads table cells to
   align columns and repeats merged cells in every column they span; Lexia
   strips both, which shrank a Form 16 from 152,852 to 23,621 characters, so all
-  its pages now fit in the text the model reads.
+  its pages now fit in the text the model reads. Docling runs in its own process,
+  which exits after `GPU_MODEL_IDLE_SECONDS` (120) unused, so the GPU is fully free
+  again for Luna Sentia's resident chat model.
 - **Pydantic AI** runs two agents on Luna Sentia's model. A schema violation is
   sent back to the model with the validation errors for another attempt.
   Lexia talks to Ollama's native `/api/chat` endpoint through a small adapter

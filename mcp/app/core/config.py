@@ -31,6 +31,9 @@ class AppConfig:
     # Docling reads on the GPU only while this much is free (a scanned page peaks near
     # 1.1 GB above its loaded models), so Sentia's Ollama and Vibia's CLAP keep theirs.
     DOCLING_GPU_MIN_FREE_MB: ClassVar[int] = 2048
+    # Docling runs in its own process, which exits after this many idle seconds so the
+    # GPU is fully free for Luna Sentia's resident chat model (see gpu_worker.py).
+    GPU_MODEL_IDLE_SECONDS: ClassVar[float] = float(os.getenv("GPU_MODEL_IDLE_SECONDS", "120") or 120)
     OFFICE_BINARY: ClassVar[str] = "soffice"
     OFFICE_TIMEOUT_SECONDS: ClassVar[int] = 120
     REMOTE_FETCH_TIMEOUT_SECONDS: ClassVar[float] = 30.0
