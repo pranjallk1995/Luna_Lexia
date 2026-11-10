@@ -18,20 +18,30 @@ Visia, and Fiora. Known regressions to fix before the next model change:
 
 ## Running one
 
-`run.py` runs one pipeline variant inside the MCP container over every stored
-document and writes JSONL without touching the database; `score.py` compares
-two runs:
+`run.py` runs the document pipeline inside the MCP container over every stored
+document and writes JSONL without touching the database; `score.py` compares two
+runs. To compare models, both runs use the container's own code:
 
 ```sh
-docker exec luna_lexia-mcp-1 mkdir -p /tmp/lexia_eval
-# copy each variant's mcp/app (e.g. from `git archive`) to /tmp/lexia_eval/<variant>/mcp,
-# and run.py and score.py to /tmp/lexia_eval
-docker exec luna_lexia-mcp-1 sh -c 'cd /tmp/lexia_eval && PYTHONPATH=old/mcp python run.py old <model> old.jsonl'
-docker exec luna_lexia-mcp-1 sh -c 'cd /tmp/lexia_eval && PYTHONPATH=new/mcp python run.py new <model> new.jsonl'
-docker exec luna_lexia-mcp-1 python /tmp/lexia_eval/score.py /tmp/lexia_eval /tmp/lexia_eval/new/mcp
+C=luna_lexia-mcp-1
+docker exec $C mkdir -p /tmp/lexia_eval
+docker cp model_evaluations/run.py $C:/tmp/lexia_eval/
+docker cp model_evaluations/score.py $C:/tmp/lexia_eval/
+L="docker exec -e PYTHONPATH=/workspace/mcp -w /tmp/lexia_eval $C python"
+$L run.py old qwen3-vl:8b-instruct old.jsonl
+$L run.py new <model> new.jsonl
+$L score.py /tmp/lexia_eval /workspace/mcp
+docker cp $C:/tmp/lexia_eval model_evaluations/results/<date>_<old>-vs-<new>
 ```
 
-`run.py` passes the page-images flag only to the `new` variant; adjust its
-`DocumentAnalyzer` arguments to the code being compared. In `scores.json`,
+To compare code instead, copy each version's `mcp/app` (for example from
+`git archive`) to `/tmp/lexia_eval/<variant>/mcp` and point `PYTHONPATH` at it.
+`--names names.txt` keeps a run to the documents of an earlier one (one name per
+line), so results stay comparable as the vault grows; `--user` picks another
+person's vault (default `u_owner`). A run that stops resumes where it left off;
+delete a row with `crash` from the JSONL to retry that document. In `scores.json`,
 `not_in_text` lists extracted values not found in the parsed text: wrong values,
 or values read from page images when the text is thin (check those against the page).
+
+Run Luna Sentia's `model_checks/check_model.py` on the new model first: it checks
+vision, JSON output, `think: false` and the GPU fit in a minute.

@@ -1,12 +1,15 @@
 """Run one Lexia pipeline variant over every stored document; write JSONL, never touch the DB.
 
-usage: python run.py <variant: old|new> <model> <out.jsonl>
-The variant's code must be on sys.path (PYTHONPATH) before this runs.
+usage: python run.py <variant: old|new> <model> <out.jsonl> [--user u_owner] [--names names.txt]
+The variant's code must be on sys.path (PYTHONPATH) before this runs: the current
+mcp/app to compare models, or two copies of it to compare code. Both variants run the
+pipeline as the app does (DocumentAnalyzer with the app's settings); only the code on
+the path and the model differ. --names keeps a run to the documents of an earlier one.
 """
 
+import argparse
 import json
 import os
-import sys
 import time
 import traceback
 from pathlib import Path
@@ -21,14 +24,20 @@ from app.integrations.parsing import DoclingParser
 from app.services.documents import DocumentReader
 from app.services.pipeline import DocumentPipeline
 
-variant, model, out_path = sys.argv[1], sys.argv[2], Path(sys.argv[3])
+parser = argparse.ArgumentParser()
+parser.add_argument("variant", choices=["old", "new"])
+parser.add_argument("model")
+parser.add_argument("out", type=Path)
+parser.add_argument("--user", default="u_owner", help="whose documents: the schema and folder name")
+parser.add_argument("--names", type=Path, help="a file of document names, one per line, to keep to")
+options = parser.parse_args()
+variant, model, out_path = options.variant, options.model, options.out
 config = AppConfig.from_env()
 reader = DocumentReader()
 chat = OllamaChat(config.ollama_url, model, config.context_tokens)
-args = [chat, reader, config.max_prompt_chars, config.max_vision_pages]
-if variant == "new":
-    args.append(True)
-analyzer = DocumentAnalyzer(*args)
+analyzer = DocumentAnalyzer(
+    chat, reader, config.max_prompt_chars, config.max_vision_pages, config.page_images_with_text
+)
 pipeline = DocumentPipeline(
     DoclingParser(reader, config.max_stored_text_chars, config.docling_device),
     analyzer,
@@ -36,14 +45,15 @@ pipeline = DocumentPipeline(
 )
 
 with psycopg.connect(config.database_url) as conn:
-    stored = dict(conn.execute("SELECT name, doc_type FROM document_metadata").fetchall())
+    stored = dict(conn.execute(f"SELECT name, doc_type FROM {options.user}.document_metadata").fetchall())
 
 done = set()
 if out_path.exists():
     done = {json.loads(line)["name"] for line in out_path.read_text().splitlines() if line.strip()}
 
-doc_dir = Path(os.environ["DOCUMENT_DIR"])
-names = sorted(n for n in stored if (doc_dir / n).exists())
+doc_dir = Path(os.environ["DOCUMENT_DIR"]) / options.user
+wanted = set(options.names.read_text().split()) if options.names else set(stored)
+names = sorted(n for n in stored if n in wanted and (doc_dir / n).exists())
 with out_path.open("a") as out:
     for i, name in enumerate(names, 1):
         if name in done:

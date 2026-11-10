@@ -7,7 +7,7 @@
 ![PostgreSQL in Luna Sentia](https://img.shields.io/badge/PostgreSQL-in_Luna_Sentia-4169E1?logo=postgresql&logoColor=white)
 ![Docling included](https://img.shields.io/badge/Docling-included-5A3FC0)
 ![NVIDIA GPU optional](https://img.shields.io/badge/NVIDIA_GPU-optional-76B900?logo=nvidia&logoColor=white)
-![Status: v1.2](https://img.shields.io/badge/Status-v1.2-2EA043)
+![Status: v1.3](https://img.shields.io/badge/Status-v1.3-2EA043)
 
 <p align="center">
   <a href="docs/assets/luna-lexia-showcase.mp4"><img src="docs/assets/luna-lexia-showcase.webp" alt="From Google sign-in through Luna Unia to uploading and reading documents in Luna Lexia with a demo account and made-up documents, then asking a chat assistant for totals and a spending analysis through its MCP tools on the real vault" width="900"></a>
@@ -206,6 +206,17 @@ is the one home for all of them, on port 42069: it checks which Luna stacks are
 running and opens each one with the shared sign-in. The purple line is the mood and
 beats of the track Vibia plays, which Lumia's lights follow.
 
+## Models
+
+| Part | Model | Where it runs | Before changing it |
+| --- | --- | --- | --- |
+| Document analysis, statement rows, cited answers, and password hints from emails | `DOCUMENT_MODEL` (default `qwen3-vl:8b-instruct`), 16k context | Sentia's Ollama, on the GPU | Compare it on every stored document with [`model_evaluations/`](model_evaluations/README.md) |
+| Semantic search | `EMBEDDING_MODEL` (default `qwen3-embedding:0.6b`) | Sentia's Ollama | Re-embed every document with `reindex_semantic_search` |
+| Reading pages | Docling's layout, table-structure and OCR (RapidOCR) models | Here, on the GPU when there is room, otherwise the CPU | Pinned in the image; compare with `model_evaluations/` like a code change |
+
+Every model served by Sentia must be in its `SENTIA_MODELS`; Sentia's
+[Changing a model](https://github.com/pranjallk1995/Luna_Sentia#changing-a-model) lists every check to run first.
+
 ## The model outside Ollama
 
 Besides the models it calls through Ollama, Luna Lexia runs one of its own, inside its
@@ -348,6 +359,12 @@ model, so Ollama keeps one model loaded for all three apps.
 A PAN, TAN, GSTIN, or IFSC that does not have its official format is sent back
 to the model once to be re-read; if it is still malformed, the document keeps it
 and is flagged for review.
+
+Before changing `DOCUMENT_MODEL`, compare the new model with the current one on
+every stored document: [`model_evaluations/`](model_evaluations/README.md) runs both
+without writing to the database and scores grounding in the text, filled fields,
+identifier formats, review flags, crashes and time. The full list of checks is in
+Sentia's [Changing a model](https://github.com/pranjallk1995/Luna_Sentia#changing-a-model).
 
 ### Long statements
 

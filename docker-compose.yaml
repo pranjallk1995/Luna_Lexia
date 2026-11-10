@@ -1,7 +1,7 @@
 services:
   mcp:
     build: ./mcp
-    image: ghcr.io/pranjallk1995/luna-lexia-mcp:${LUNA_IMAGE_TAG:-v1.2.3}
+    image: ghcr.io/pranjallk1995/luna-lexia-mcp:${LUNA_IMAGE_TAG:-v1.3.0}
     working_dir: /workspace/mcp
     restart: unless-stopped
     # Docling's layout, table, and OCR models run on the GPU (DOCLING_DEVICE=auto picks
@@ -60,7 +60,7 @@ services:
 
   ui:
     build: ./ui
-    image: ghcr.io/pranjallk1995/luna-lexia-ui:${LUNA_IMAGE_TAG:-v1.2.3}
+    image: ghcr.io/pranjallk1995/luna-lexia-ui:${LUNA_IMAGE_TAG:-v1.3.0}
     working_dir: /workspace/ui
     restart: unless-stopped
     environment:
