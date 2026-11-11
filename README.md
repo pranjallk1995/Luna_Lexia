@@ -7,7 +7,7 @@
 ![PostgreSQL in Luna Sentia](https://img.shields.io/badge/PostgreSQL-in_Luna_Sentia-4169E1?logo=postgresql&logoColor=white)
 ![Docling included](https://img.shields.io/badge/Docling-included-5A3FC0)
 ![NVIDIA GPU optional](https://img.shields.io/badge/NVIDIA_GPU-optional-76B900?logo=nvidia&logoColor=white)
-![Status: v1.3](https://img.shields.io/badge/Status-v1.3-2EA043)
+![Status: v1.4](https://img.shields.io/badge/Status-v1.4-2EA043)
 
 <p align="center">
   <a href="docs/assets/luna-lexia-showcase.mp4"><img src="docs/assets/luna-lexia-showcase.webp" alt="From Google sign-in through Luna Unia to uploading and reading documents in Luna Lexia with a demo account and made-up documents, then asking a chat assistant for totals and a spending analysis through its MCP tools on the real vault" width="900"></a>
