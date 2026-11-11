@@ -21,7 +21,7 @@ services:
       LUNALEXIA_PUBLIC_BASE_URL: ${LUNALEXIA_PUBLIC_BASE_URL:-}
       MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-http://localhost:18004}
       UI_PUBLIC_URL: ${UI_PUBLIC_URL:-http://localhost:18505}
-      LUNALEXIA_API_TOKEN: ${LUNALEXIA_API_TOKEN:?Set LUNALEXIA_API_TOKEN to a private random value of at least 32 characters}
+      LUNALEXIA_API_TOKEN: ${LUNALEXIA_API_TOKEN:-lunalexia-dev-token-for-localhost-only}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
     expose:
@@ -68,8 +68,8 @@ services:
       LUNA_SSO_INTERNAL_URL: ${LUNA_SSO_INTERNAL_URL:-http://luna-sentia-auth:8000}
       DOCUMENT_DIR: /data/documents
       LUNALEXIA_API_URL: http://luna-lexia-mcp:8000
-      LUNALEXIA_API_TOKEN: ${LUNALEXIA_API_TOKEN:?Set LUNALEXIA_API_TOKEN to a private random value of at least 32 characters}
-      LUNALEXIA_ALLOWED_EMAILS: ${LUNALEXIA_ALLOWED_EMAILS:?Set LUNALEXIA_ALLOWED_EMAILS to the Google accounts allowed to access Lexia}
+      LUNALEXIA_API_TOKEN: ${LUNALEXIA_API_TOKEN:-lunalexia-dev-token-for-localhost-only}
+      LUNALEXIA_ALLOWED_EMAILS: ${LUNALEXIA_ALLOWED_EMAILS:-}
     ports:
       - "127.0.0.1:18505:8501"
     volumes:

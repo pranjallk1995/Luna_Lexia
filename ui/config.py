@@ -100,8 +100,6 @@ class UIConfig:
             for email in os.getenv("LUNALEXIA_ALLOWED_EMAILS", "").split(",")
             if email.strip()
         )
-        if not allowed_emails:
-            raise RuntimeError("LUNALEXIA_ALLOWED_EMAILS must list at least one account.")
         return cls(
             document_dir=Path(os.getenv("DOCUMENT_DIR", "/data/documents")),
             api_url=api_url,

@@ -277,7 +277,9 @@ See [Is Sentia healthy?](https://github.com/pranjallk1995/Luna_Sentia#is-sentia-
 Or start Sentia and every app in order with `../luna.sh start` (Lexia is part
 of the default app list).
 
-Create a private `.env` from `.env.example`:
+A fresh clone needs no `.env`: `luna.sh start` runs Lexia with localhost defaults, where only Luna Sentia's owner may use it and the UI-to-backend token is `lunalexia-dev-token-for-localhost-only`. Set your own values before giving it a public (https) address; `luna.sh start` refuses a public app that still uses the default token. Changing the token later disconnects Google Drive, as described below.
+
+To change them, create a private `.env` from `.env.example`:
 
 ```dotenv
 # Must equal LUNALEXIA_DB_PASSWORD in Luna_Sentia/.env
@@ -308,8 +310,8 @@ Lexia's UI needs no Google client of its own. Set in `.env`:
   Sentia's `.env`), for example `https://auth.lunaapps.fyi`.
 - `LUNA_SSO_INTERNAL_URL`: `http://luna-sentia-auth:8000`, where Lexia checks
   sessions over `luna_sentia_network`.
-- `LUNALEXIA_ALLOWED_EMAILS`: who may use Lexia among the people with a Luna account: `*`
-  for everyone, or a comma-separated list. Checked after Sentia confirms who is signed in.
+- `LUNALEXIA_ALLOWED_EMAILS`: who may use Lexia among the people with a Luna account: blank
+  (the default) for Sentia's owner only, `*` for everyone, or a comma-separated list. The owner always may. Checked after Sentia confirms who is signed in.
 
 Sentia's auth service must be healthy before Lexia can sign anyone in; see
 [Single sign-on](https://github.com/pranjallk1995/Luna_Sentia#single-sign-on) for its setup.
