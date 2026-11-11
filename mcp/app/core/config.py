@@ -197,8 +197,8 @@ class AppConfig:
         return cls(
             google_client_id=os.getenv("GOOGLE_CLIENT_ID", "").strip(),
             google_client_secret=os.getenv("GOOGLE_CLIENT_SECRET", "").strip(),
-            drive_redirect_uri=f"{mcp_public_url or 'http://localhost:18004'}/api/drive/callback",
-            gmail_redirect_uri=f"{mcp_public_url or 'http://localhost:18004'}/api/gmail/callback",
+            drive_redirect_uri=f"{mcp_public_url or 'http://localhost:18001'}/api/drive/callback",
+            gmail_redirect_uri=f"{mcp_public_url or 'http://localhost:18001'}/api/gmail/callback",
             token_encryption_key=cls.derive_encryption_key(api_token),
             mcp_public_url=mcp_public_url,
             document_dir=Path(os.getenv("DOCUMENT_DIR", "/data/documents")),

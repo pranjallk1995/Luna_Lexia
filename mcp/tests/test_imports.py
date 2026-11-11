@@ -138,7 +138,7 @@ class FakeDrive:
 
 class FakeOAuth(DriveOAuth):
     def __init__(self) -> None:
-        super().__init__("client", "secret", "http://localhost:18004/api/drive/callback", "x" * 32)
+        super().__init__("client", "secret", "http://localhost:18001/api/drive/callback", "x" * 32)
 
     def user_of(self, state):
         return "owner"
@@ -183,7 +183,7 @@ class ImportTestCase(unittest.TestCase):
         self.downloads_temp.cleanup()
 
     def connect(self):
-        self.imports.connect("http://localhost:18004/api/drive/callback?code=x&state=y", "y")
+        self.imports.connect("http://localhost:18001/api/drive/callback?code=x&state=y", "y")
 
 
 class DriveConnectionTests(ImportTestCase):

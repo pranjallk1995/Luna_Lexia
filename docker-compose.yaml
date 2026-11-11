@@ -8,7 +8,7 @@ services:
     # it when present). Remove this line to run on CPU on a machine without one.
     gpus: all
     environment:
-      LUNA_SSO_URL: ${LUNA_SSO_URL:-http://localhost:19090}
+      LUNA_SSO_URL: ${LUNA_SSO_URL:-http://localhost:19001}
       LUNA_SSO_INTERNAL_URL: ${LUNA_SSO_INTERNAL_URL:-http://luna-sentia-auth:8000}
       DATABASE_URL: postgresql://lunalexia:${POSTGRES_PASSWORD:-lunalexia-dev}@luna-sentia-db:5432/lunalexia
       DOCUMENT_DIR: /data/documents
@@ -19,15 +19,15 @@ services:
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1024}
       DOCLING_DEVICE: ${DOCLING_DEVICE:-auto}
       LUNALEXIA_PUBLIC_BASE_URL: ${LUNALEXIA_PUBLIC_BASE_URL:-}
-      MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-http://localhost:18004}
-      UI_PUBLIC_URL: ${UI_PUBLIC_URL:-http://localhost:18505}
+      MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-http://localhost:18001}
+      UI_PUBLIC_URL: ${UI_PUBLIC_URL:-http://localhost:18501}
       LUNALEXIA_API_TOKEN: ${LUNALEXIA_API_TOKEN:-lunalexia-dev-token-for-localhost-only}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
     expose:
       - "8000"
     ports:
-      - "127.0.0.1:18004:8000"
+      - "127.0.0.1:18001:8000"
     volumes:
       - document_data:/data/documents
       - download_data:/data/downloads
@@ -64,14 +64,14 @@ services:
     working_dir: /workspace/ui
     restart: unless-stopped
     environment:
-      LUNA_SSO_URL: ${LUNA_SSO_URL:-http://localhost:19090}
+      LUNA_SSO_URL: ${LUNA_SSO_URL:-http://localhost:19001}
       LUNA_SSO_INTERNAL_URL: ${LUNA_SSO_INTERNAL_URL:-http://luna-sentia-auth:8000}
       DOCUMENT_DIR: /data/documents
       LUNALEXIA_API_URL: http://luna-lexia-mcp:8000
       LUNALEXIA_API_TOKEN: ${LUNALEXIA_API_TOKEN:-lunalexia-dev-token-for-localhost-only}
       LUNALEXIA_ALLOWED_EMAILS: ${LUNALEXIA_ALLOWED_EMAILS:-}
     ports:
-      - "127.0.0.1:18505:8501"
+      - "127.0.0.1:18501:8501"
     volumes:
       - document_data:/data/documents:ro
     develop:

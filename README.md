@@ -290,7 +290,7 @@ DOCLING_DEVICE=auto
 LUNALEXIA_PUBLIC_BASE_URL=
 LUNALEXIA_API_TOKEN=replace-with-a-random-value-of-at-least-32-characters
 LUNALEXIA_ALLOWED_EMAILS=*
-MCP_PUBLIC_URL=http://localhost:18004
+MCP_PUBLIC_URL=http://localhost:18001
 ```
 
 `LUNALEXIA_API_TOKEN` is a shared secret between the UI, the MCP server, and
@@ -327,9 +327,9 @@ OCR models, and LibreOffice for Word and Excel files, into the image (about
 12.3 GB), so uploads never wait on downloads and
 parsing works without internet access.
 
-- UI: <http://127.0.0.1:18505>
-- Service health: <http://127.0.0.1:18004/health>
-- MCP endpoint: <http://127.0.0.1:18004/mcp> (clients sign in; see Connecting an MCP client)
+- UI: <http://127.0.0.1:18501>
+- Service health: <http://127.0.0.1:18001/health>
+- MCP endpoint: <http://127.0.0.1:18001/mcp> (clients sign in; see Connecting an MCP client)
 
 | Setting | Default |
 | --- | --- |
