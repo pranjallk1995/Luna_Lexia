@@ -258,6 +258,24 @@ Each person connects their own Google Drive and Gmail, and import jobs, re-analy
 
 In the code, `mcp/app/core/tenancy.py` holds who the current request or job acts for, `mcp/app/data/tenants.py` creates and removes each person's schema, and `mcp/app/transport/luna_mcp.py` checks connector tokens and the private token on `/api/` routes. Code that does not say who it acts for raises `NoUserError` rather than reading anyone's data.
 
+## Quickstart
+
+On one machine you need no `.env`. Clone Lexia beside [Luna Sentia](https://github.com/pranjallk1995/Luna_Sentia),
+which runs its database, models, and sign-in, then start both:
+
+```sh
+git clone https://github.com/pranjallk1995/Luna_Sentia.git
+git clone https://github.com/pranjallk1995/Luna_Lexia.git
+./Luna_Sentia/luna.sh start lexia
+```
+
+`start` pulls the release images, starts Sentia and waits until it is healthy, then starts
+Lexia. Once both are up, it deletes the images their new ones replaced. Open
+<http://localhost:18501> and sign in as Sentia's owner with one click. To run your
+local code instead, use `./Luna_Sentia/luna.sh start --build lexia`. Before giving Lexia a
+public address, set your own secrets as described in [Start](#start). Every option of
+`luna.sh` is in [Start everything](https://github.com/pranjallk1995/Luna_Sentia#start-everything).
+
 ## Start
 
 Start [Luna Sentia](https://github.com/pranjallk1995/Luna_Sentia) first and wait until it is healthy. Sentia runs
