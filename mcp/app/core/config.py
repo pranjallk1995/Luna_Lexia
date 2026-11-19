@@ -168,7 +168,7 @@ class AppConfig:
         parsed = urlparse(ollama_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise RuntimeError("OLLAMA_URL must be a valid HTTP(S) URL.")
-        document_model = os.getenv("DOCUMENT_MODEL", "qwen3-vl:8b-instruct").strip()
+        document_model = os.getenv("DOCUMENT_MODEL", "huihui_ai/qwen3-vl-abliterated:8b-instruct").strip()
         if not document_model:
             raise RuntimeError("DOCUMENT_MODEL cannot be blank.")
         public_base_url = os.getenv("LUNALEXIA_PUBLIC_BASE_URL", "").strip().rstrip("/")

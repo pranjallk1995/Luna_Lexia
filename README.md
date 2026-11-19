@@ -68,7 +68,7 @@ others, ChatGPT corrects the extracted details of all five agreements, and the
 original PDFs are untouched. Amounts, document previews, tags, and chat names in
 the screenshot are blurred.
 
-> **Requires Luna Sentia, running and healthy:** Luna Lexia keeps its data in Luna Sentia's PostgreSQL (`luna-sentia-db`) and joins Sentia's `luna_sentia_network`; it has no database of its own. Start [Luna Sentia](https://github.com/pranjallk1995/Luna_Sentia) first and wait until its `postgres` and `ollama` services report healthy, as described under [Start](#start). Sentia also serves the model: Lexia uses `qwen3-vl:8b-instruct` by default, which Sentia pulls with its other models.
+> **Requires Luna Sentia, running and healthy:** Luna Lexia keeps its data in Luna Sentia's PostgreSQL (`luna-sentia-db`) and joins Sentia's `luna_sentia_network`; it has no database of its own. Start [Luna Sentia](https://github.com/pranjallk1995/Luna_Sentia) first and wait until its `postgres` and `ollama` services report healthy, as described under [Start](#start). Sentia also serves the model: Lexia uses `huihui_ai/qwen3-vl-abliterated:8b-instruct` by default, which Sentia pulls with its other models.
 
 ## How a document is processed
 
@@ -200,9 +200,8 @@ rather than the filename when linking a Fiora record to its supporting document.
 
 | Model | Served by | Used by | Before changing it |
 | --- | --- | --- | --- |
-| `qwen3-vl:8b-instruct` | Ollama | Lexia (`DOCUMENT_MODEL`), Visia (`VISION_MODEL`), Vibia (`CAPTION_MODEL`), Fiora (`OLLAMA_MODEL`) | `model_checks/check_model.py`, then Lexia's, Visia's and Vibia's `model_evaluations/` |
+| `huihui_ai/qwen3-vl-abliterated:8b-instruct` (Qwen3-VL 8B, uncensored) | Ollama, at 16k context for every app; in Socia's chat model's place while Luna looks at a photo | Lexia (`DOCUMENT_MODEL`), Visia (`VISION_MODEL`), Vibia (`CAPTION_MODEL`), Fiora (`OLLAMA_MODEL`), Socia's photo replies (`LUNASOCIA_VISION_MODEL`) | `model_checks/check_model.py`, then Lexia's, Visia's and Vibia's `model_evaluations/` and Socia's cat game |
 | `huihui_ai/qwen3-abliterated:8b` (Qwen3 8B, uncensored) | Ollama, resident at `SENTIA_RESIDENT_CONTEXT` | Socia's chat (`LUNASOCIA_CHAT_MODEL`) | `model_checks/check_model.py --context 8192`, then Socia's `model_evaluations/` |
-| `huihui_ai/qwen3-vl-abliterated:8b-instruct` (Qwen3-VL 8B, uncensored) | Ollama, in the chat model's place while Luna looks at a photo | Socia's photo replies (`LUNASOCIA_VISION_MODEL`) | Socia's cat game, then a few photos by hand |
 | `qwen3-embedding:0.6b` | Ollama | Lexia's semantic search (`EMBEDDING_MODEL`) | Re-embed with Lexia's `reindex_semantic_search` |
 | Qwen-Image 2.1 Turbo | ComfyUI | Socia's pictures of Luna | A few pictures by hand |
 | SigLIP 2 (`google/siglip2-base-patch16-224`) | Visia itself, GPU only | Visia's meaning search | Pinned in Visia's image; `backfill_metadata` re-embeds |
@@ -233,7 +232,7 @@ play music, dim the lights or find a photo from the chat.
 
 | Part | Model | Where it runs | Before changing it |
 | --- | --- | --- | --- |
-| Document analysis, statement rows, cited answers, and password hints from emails | `DOCUMENT_MODEL` (default `qwen3-vl:8b-instruct`), 16k context | Sentia's Ollama, on the GPU | Compare it on every stored document with [`model_evaluations/`](model_evaluations/README.md) |
+| Document analysis, statement rows, cited answers, and password hints from emails | `DOCUMENT_MODEL` (default `huihui_ai/qwen3-vl-abliterated:8b-instruct`), 16k context | Sentia's Ollama, on the GPU | Compare it on every stored document with [`model_evaluations/`](model_evaluations/README.md) |
 | Semantic search | `EMBEDDING_MODEL` (default `qwen3-embedding:0.6b`) | Sentia's Ollama | Re-embed every document with `reindex_semantic_search` |
 | Reading pages | Docling's layout, table-structure and OCR (RapidOCR) models | Here, on the GPU when there is room, otherwise the CPU | Pinned in the image; compare with `model_evaluations/` like a code change |
 
@@ -315,7 +314,7 @@ To change them, create a private `.env` from `.env.example`:
 ```dotenv
 # Must equal LUNALEXIA_DB_PASSWORD in Luna_Sentia/.env
 POSTGRES_PASSWORD=replace-with-a-private-database-password
-DOCUMENT_MODEL=qwen3-vl:8b-instruct
+DOCUMENT_MODEL=huihui_ai/qwen3-vl-abliterated:8b-instruct
 PAGE_IMAGES_WITH_TEXT=true
 DOCLING_DEVICE=auto
 LUNALEXIA_PUBLIC_BASE_URL=
@@ -397,7 +396,7 @@ models stay on the GPU.
 
 ### Model and context
 
-`DOCUMENT_MODEL` (`qwen3-vl:8b-instruct`) must be listed in Sentia's `SENTIA_MODELS`.
+`DOCUMENT_MODEL` (`huihui_ai/qwen3-vl-abliterated:8b-instruct`) must be listed in Sentia's `SENTIA_MODELS`.
 Use the `-instruct` tag: plain `qwen3-vl:8b` is the thinking variant, which
 reasons at length before every reply and ignores Lexia's JSON schema while it does.
 Lexia asks Ollama for a 16,384-token context per request (`context_tokens` in

@@ -1,7 +1,7 @@
 services:
   mcp:
     build: ./mcp
-    image: ghcr.io/pranjallk1995/luna-lexia-mcp:${LUNA_IMAGE_TAG:-v1.4.1}
+    image: ghcr.io/pranjallk1995/luna-lexia-mcp:${LUNA_IMAGE_TAG:-v1.5.0}
     working_dir: /workspace/mcp
     restart: unless-stopped
     # Docling's layout, table, and OCR models run on the GPU (DOCLING_DEVICE=auto picks
@@ -13,7 +13,7 @@ services:
       DATABASE_URL: postgresql://lunalexia:${POSTGRES_PASSWORD:-lunalexia-dev}@luna-sentia-db:5432/lunalexia
       DOCUMENT_DIR: /data/documents
       OLLAMA_URL: ${OLLAMA_URL:-http://luna-sentia-ollama:11434}
-      DOCUMENT_MODEL: ${DOCUMENT_MODEL:-qwen3-vl:8b-instruct}
+      DOCUMENT_MODEL: ${DOCUMENT_MODEL:-huihui_ai/qwen3-vl-abliterated:8b-instruct}
       PAGE_IMAGES_WITH_TEXT: ${PAGE_IMAGES_WITH_TEXT:-true}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-qwen3-embedding:0.6b}
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1024}
@@ -60,7 +60,7 @@ services:
 
   ui:
     build: ./ui
-    image: ghcr.io/pranjallk1995/luna-lexia-ui:${LUNA_IMAGE_TAG:-v1.4.1}
+    image: ghcr.io/pranjallk1995/luna-lexia-ui:${LUNA_IMAGE_TAG:-v1.5.0}
     working_dir: /workspace/ui
     restart: unless-stopped
     environment:

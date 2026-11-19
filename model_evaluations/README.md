@@ -6,6 +6,18 @@ kept out of git in `results/` (see `.gitignore`).
 
 ## Last evaluation
 
+`results/2026-11-19_qwen3-vl-vs-qwen3-vl-abliterated/`: `qwen3-vl:8b-instruct` against
+`huihui_ai/qwen3-vl-abliterated:8b-instruct`, the model Luna Socia already used for photos,
+same code, on the same 89 documents. **Adopted** for Lexia, Visia, Vibia and Fiora, so one
+vision model serves every app. Review flags went from 21 to 17 and fields filled from 89.2 %
+to 90.0 %, with about the same share of values found in the text (96.5 %). It was 20 % faster
+(20.5 instead of 25.7 minutes), and no document changed type. It reads Form 16 professional
+tax (0 before, on 3 of 5), tells a voter ID from a PAN card, and leaves a rent agreement's
+end date empty rather than copying the start date. Every field `qwen3.5:9b` emptied comes out
+the same as before. Still open: `employee_provident_fund` and `pay_period` are often null
+on payslips, an offer letter's variable pay is wrong, and payslip `currency` switches
+between "INR" and "RS.".
+
 `results/2026-11-10_qwen3-vl-vs-qwen3.5-9b/`: `qwen3-vl:8b-instruct` against
 `qwen3.5:9b`, same code, on the 89 documents of the evaluation before it. **Not adopted**:
 the 9B fixes two of the regressions below (PF amounts on payslips, ID numbers) and
@@ -35,7 +47,7 @@ docker exec $C mkdir -p /tmp/lexia_eval
 docker cp model_evaluations/run.py $C:/tmp/lexia_eval/
 docker cp model_evaluations/score.py $C:/tmp/lexia_eval/
 L="docker exec -e PYTHONPATH=/workspace/mcp -w /tmp/lexia_eval $C python"
-$L run.py old qwen3-vl:8b-instruct old.jsonl
+$L run.py old huihui_ai/qwen3-vl-abliterated:8b-instruct old.jsonl
 $L run.py new <model> new.jsonl
 $L score.py /tmp/lexia_eval /workspace/mcp
 docker cp $C:/tmp/lexia_eval model_evaluations/results/<date>_<old>-vs-<new>
