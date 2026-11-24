@@ -1,5 +1,5 @@
-import { Cloud, Eye, Heart, LayoutGrid, List, Lock, LogOut, Mail, Upload, type LucideIcon } from "lucide-react";
-import { useState } from "react";
+import { ChevronDown, Cloud, Eye, Heart, LayoutGrid, List, Lock, LogOut, Mail, Upload, type LucideIcon } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import { useDriveStatus, useGmailStatus, type Section, type Settings } from "./api";
 import { Dialog } from "./components/Dialog";
@@ -19,28 +19,76 @@ const SECTIONS: { id: Section; label: string; icon: LucideIcon }[] = [
   { id: "hidden", label: "Hidden Documents", icon: Lock },
 ];
 
-// Google Drive and Gmail on the main page: each opens its own panel, with a dot when it is connected.
+// Upload Docs as a split button: the main part uploads from this device, the arrow opens Google Drive and Gmail,
+// each saying whether it is connected.
 type Source = "drive" | "gmail";
 
-function SourceButton({ source, onOpen }: { source: Source; onOpen: () => void }) {
+function UploadMenu({ busy, onUpload, onSource }: { busy: boolean; onUpload: () => void; onSource: (source: Source) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
   const drive = useDriveStatus();
   const gmail = useGmailStatus();
-  const status = (source === "drive" ? drive : gmail).data;
-  const connected = Boolean(status?.configured && status.connected);
-  const label = source === "drive" ? "Google Drive" : "Gmail";
-  const Icon = source === "drive" ? Cloud : Mail;
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (!ref.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    window.document.addEventListener("pointerdown", closeOutside);
+    window.document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.document.removeEventListener("pointerdown", closeOutside);
+      window.document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+
+  const items: { source: Source; label: string; icon: LucideIcon; status: typeof drive.data }[] = [
+    { source: "drive", label: "Google Drive", icon: Cloud, status: drive.data },
+    { source: "gmail", label: "Gmail", icon: Mail, status: gmail.data },
+  ];
+  const choose = (source: Source) => {
+    setOpen(false);
+    onSource(source);
+  };
+
   return (
-    <button
-      className="lv-button lx-source"
-      type="button"
-      onClick={onOpen}
-      aria-label={`${label}${connected ? " (connected)" : ""}`}
-      title={connected ? `${label}: connected as ${status?.email}` : `${label}: connect and import`}
-    >
-      <Icon size={16} />
-      {label}
-      {connected && <span className="lx-connected-dot" aria-hidden="true" />}
-    </button>
+    <div className="lx-split lv-header-main" ref={ref}>
+      <button className="lv-button lv-button-primary lx-split-main" type="button" onClick={onUpload}>
+        <Upload size={17} />
+        Upload Docs
+        {busy && <span className="lv-busy-dot" aria-label="Uploading" />}
+      </button>
+      <button
+        className="lv-button lv-button-primary lx-split-arrow"
+        type="button"
+        aria-label="Import from Google Drive or Gmail"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <ChevronDown size={16} />
+      </button>
+      {open && (
+        <div className="lx-split-menu" role="menu">
+          {items.map(({ source, label, icon: Icon, status }) => {
+            const connected = Boolean(status?.configured && status.connected);
+            return (
+              <button className="lx-split-item" type="button" role="menuitem" key={source} onClick={() => choose(source)}>
+                <Icon size={16} />
+                <span className="lx-split-label">
+                  {label}
+                  <small>{connected ? status?.email : status && !status.configured ? "Not set up" : "Not connected"}</small>
+                </span>
+                {connected && <span className="lx-connected-dot" aria-label="Connected" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -89,11 +137,7 @@ function Workspace({ logoutUrl, settings }: { logoutUrl: string; settings: Setti
           >
             <List size={18} />
           </button>
-          <button className="lv-button lv-button-primary lv-header-main" type="button" onClick={() => setUploading(true)}>
-            <Upload size={17} />
-            Upload Docs
-            {uploads.progress && <span className="lv-busy-dot" aria-label="Uploading" />}
-          </button>
+          <UploadMenu busy={Boolean(uploads.progress)} onUpload={() => setUploading(true)} onSource={setSource} />
           <a className="lv-button lv-sign-out" href={logoutUrl}>
             <LogOut size={16} />
             Sign out
@@ -101,10 +145,6 @@ function Workspace({ logoutUrl, settings }: { logoutUrl: string; settings: Setti
         </div>
       </div>
 
-      <div className="lx-sources" aria-label="Import from">
-        <SourceButton source="drive" onOpen={() => setSource("drive")} />
-        <SourceButton source="gmail" onOpen={() => setSource("gmail")} />
-      </div>
 
       <nav className="lv-nav" aria-label="Gallery section">
         {SECTIONS.map(({ id, label, icon: Icon }) => (
