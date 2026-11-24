@@ -1058,6 +1058,13 @@ html:has(.lv-viewer[open]) {
   margin-top: 0.75rem;
 }
 
+.lx-failed-actions {
+  display: flex;
+  flex: none;
+  gap: 0.35rem;
+  align-items: center;
+}
+
 .lv-upload-result {
   padding: 0.75rem 0.9rem;
   margin-top: 0.75rem;

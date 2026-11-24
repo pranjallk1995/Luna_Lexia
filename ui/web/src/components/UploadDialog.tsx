@@ -1,4 +1,4 @@
-import { RefreshCw, UploadCloud } from "lucide-react";
+import { RefreshCw, UploadCloud, X } from "lucide-react";
 import { useState, type DragEvent } from "react";
 
 import { useDocumentTypes, type Settings } from "../api";
@@ -94,9 +94,14 @@ function DeviceUpload({ uploads, settings }: Omit<Props, "onClose">) {
           <span>
             Could not upload {upload.file.name}: {upload.message}
           </span>
-          <button className="lv-button" type="button" onClick={() => uploads.retry(upload)}>
-            Retry
-          </button>
+          <div className="lx-failed-actions">
+            <button className="lv-button" type="button" onClick={() => uploads.retry(upload, password ? { password } : undefined)}>
+              Retry
+            </button>
+            <button className="lv-icon-button" type="button" aria-label="Dismiss" title="Dismiss" onClick={() => uploads.dismiss(upload)}>
+              <X size={16} />
+            </button>
+          </div>
         </div>
       ))}
 

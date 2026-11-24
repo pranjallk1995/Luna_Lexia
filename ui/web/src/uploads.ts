@@ -77,17 +77,22 @@ export function useUploads() {
     [drain],
   );
 
+  // Try a failed upload again, with any options given now (a password typed after it failed) over its own.
   const retry = useCallback(
-    (upload: FailedUpload) => {
+    (upload: FailedUpload, options?: Partial<FailedUpload["options"]>) => {
       setFailed((current) => current.filter((item) => item.id !== upload.id));
-      add([upload.file], upload.options);
+      add([upload.file], { ...upload.options, ...options });
     },
     [add],
   );
 
+  const dismiss = useCallback((upload: FailedUpload) => {
+    setFailed((current) => current.filter((item) => item.id !== upload.id));
+  }, []);
+
   const clear = useCallback(() => setResults([]), []);
 
-  return { results, failed, progress, add, retry, clear };
+  return { results, failed, progress, add, retry, dismiss, clear };
 }
 
 export type Uploads = ReturnType<typeof useUploads>;
