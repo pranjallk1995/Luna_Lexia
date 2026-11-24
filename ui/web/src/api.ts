@@ -361,7 +361,8 @@ export const gmail = {
     post<{ source: string }>("/api/imports/gmail", { query, doc_type: docType, password, password_details: passwordDetails }),
 };
 
-// Saved passwords of locked PDFs: tried on every locked upload or import, by label only; the password never comes back.
+// Saved passwords of locked PDFs: tried on every locked upload or import and listed by label only.
+// Showing, changing, or deleting one sends the person's Luna PIN, which the gateway checks with Sentia each time.
 
 export type SavedPassword = {
   password_id: number;
@@ -379,8 +380,16 @@ export const usePasswords = () =>
     staleTime: 0,
   });
 
+export type RevealedPassword = { password_id: number; label: string; doc_type?: string | null; password: string };
+
+/** A saved password's new label and type; an empty ``password`` keeps the old one. */
+export type PasswordChange = { label: string; password: string; doc_type: string | null };
+
 export const passwords = {
   save: (label: string, password: string, docType: string | null) =>
     post<SavedPassword>("/api/passwords", { label, password, doc_type: docType }),
-  forget: (id: number) => remove(`/api/passwords/${id}`),
+  reveal: (id: number, pin: string) => post<RevealedPassword>(`/app/passwords/${id}/reveal`, { pin }),
+  update: (id: number, pin: string, change: PasswordChange) =>
+    post<SavedPassword>(`/app/passwords/${id}/update`, { pin, ...change }),
+  forget: (id: number, pin: string) => post(`/app/passwords/${id}/delete`, { pin }),
 };

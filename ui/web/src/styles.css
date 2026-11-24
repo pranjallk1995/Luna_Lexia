@@ -1930,3 +1930,21 @@ html:has(.lv-bulk) .lv-toasts {
   padding: 0.55rem 0;
   border-bottom: 1px solid var(--lv-border);
 }
+
+.lx-password-shown {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--lv-border);
+  border-radius: 0.5rem;
+  background: var(--lv-control);
+}
+
+.lx-password-shown code {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--luna-text-body);
+  user-select: all;
+}

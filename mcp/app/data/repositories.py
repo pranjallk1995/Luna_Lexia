@@ -408,6 +408,23 @@ class PasswordRepository(Repository):
                ORDER BY last_worked_at DESC NULLS LAST, times_worked DESC, password_id"""
         )
 
+    def secret(self, password_id: int) -> Row | None:
+        """One saved password with its secret, to show to its owner once they confirm their PIN."""
+        return self.fetch_one(
+            "SELECT password_id, label, doc_type, encrypted_password FROM document_passwords WHERE password_id = %s",
+            (password_id,),
+        )
+
+    def update(self, password_id: int, label: str, doc_type: str | None, encrypted_password: str | None) -> Row | None:
+        """Change a saved password's label and type, and its secret unless ``encrypted_password`` is None."""
+        return self.fetch_one(
+            f"""UPDATE document_passwords
+                   SET label = %s, doc_type = %s, encrypted_password = COALESCE(%s, encrypted_password)
+                 WHERE password_id = %s
+             RETURNING {self.LISTED}""",
+            (label, doc_type, encrypted_password, password_id),
+        )
+
     def delete(self, password_id: int) -> bool:
         with self.database.connect() as connection:
             return connection.execute(

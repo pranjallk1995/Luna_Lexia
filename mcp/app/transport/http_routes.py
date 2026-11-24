@@ -460,7 +460,7 @@ class LexiaHTTPRoutes:
         self.route("POST", "/api/imports/{job_id}/retry", retry, 201)
 
     def _register_passwords(self) -> None:
-        """Saved passwords of locked PDFs: listed by label, saved and deleted; never sent back."""
+        """Saved passwords of locked PDFs: listed by label, saved, changed, deleted, and shown to the UI gateway."""
         passwords = self.service.passwords
 
         async def listing(request: Request):
@@ -476,8 +476,22 @@ class LexiaHTTPRoutes:
         async def forget(request: Request):
             return await anyio.to_thread.run_sync(passwords.forget, int(request.path_params["password_id"]))
 
+        async def update(request: Request):
+            payload = await self.payload(request)
+            return await anyio.to_thread.run_sync(
+                passwords.update, int(request.path_params["password_id"]), str(payload.get("label") or ""),
+                str(payload.get("password") or ""), payload.get("doc_type") or None,
+            )
+
+        async def reveal(request: Request):
+            # Only the UI gateway calls this, once the person has typed their PIN.
+            answer = await anyio.to_thread.run_sync(passwords.reveal, int(request.path_params["password_id"]))
+            return JSONResponse(answer, headers={"Cache-Control": "no-store"})
+
         self.route("GET", "/api/passwords", listing)
         self.route("POST", "/api/passwords", save, 201)
+        self.route("POST", "/api/passwords/{password_id:int}", update)
+        self.route("GET", "/api/passwords/{password_id:int}/password", reveal)
         self.route("DELETE", "/api/passwords/{password_id:int}", forget)
 
     def _register_hidden_documents(self) -> None:

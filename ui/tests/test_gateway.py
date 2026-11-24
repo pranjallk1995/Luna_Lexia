@@ -153,11 +153,15 @@ class ProxyTests(GatewayTestCase):
             ("POST", "/api/imports/12345678-1234-1234-1234-123456789012/retry"),
             ("GET", "/api/passwords"),
             ("POST", "/api/passwords"),
-            ("DELETE", "/api/passwords/7"),
         ):
             self.assertEqual(self.client.request(method, path).status_code, 200, path)
-        # Only a saved password's number can be deleted.
-        self.assertNotEqual(self.client.delete("/api/passwords/..%2Fdocuments").status_code, 200)
+        # A saved password is shown, changed, or deleted only through /app/passwords, with the PIN.
+        for method, path in (
+            ("DELETE", "/api/passwords/7"),
+            ("POST", "/api/passwords/7"),
+            ("GET", "/api/passwords/7/password"),
+        ):
+            self.assertEqual(self.client.request(method, path).status_code, 404, path)
         self.assertEqual(self.backend_requests[1].url.raw_path, b"/api/documents/a%20b.pdf")
 
     def test_query_reaches_the_backend(self):
@@ -213,6 +217,54 @@ class BulkProxyTests(GatewayTestCase):
     def test_the_browser_learns_the_batch_size(self):
         self.sign_in()
         self.assertEqual(self.client.get("/auth/session").json()["settings"]["batch_size"], UIConfig.BATCH_SIZE)
+
+class SavedPasswordPinTests(GatewayTestCase):
+    """Showing, changing, or deleting a saved password takes the PIN each time."""
+
+    def backend_paths(self) -> list[tuple[str, str]]:
+        return [(request.method, request.url.path) for request in self.backend_requests]
+
+    def test_each_action_reaches_the_backend_only_with_the_right_pin(self):
+        self.sign_in()
+        for action, method, path in (
+            ("reveal", "GET", "/api/passwords/7/password"),
+            ("update", "POST", "/api/passwords/7"),
+            ("delete", "DELETE", "/api/passwords/7"),
+        ):
+            wrong = self.client.post(f"/app/passwords/7/{action}", json={"pin": "111111", "label": "Card"})
+            self.assertEqual((wrong.status_code, wrong.json()["attempts_left"]), (403, 4), action)
+            self.assertEqual(wrong.json()["error"], "Wrong PIN. 4 tries left.")
+            self.assertNotIn((method, path), self.backend_paths())
+            right = self.client.post(f"/app/passwords/7/{action}", json={"pin": PIN, "label": "Card"})
+            self.assertEqual(right.status_code, 200, action)
+            self.assertIn((method, path), self.backend_paths())
+
+    def test_the_pin_is_not_sent_on_and_a_shown_password_is_never_cached(self):
+        self.sign_in()
+        shown = self.client.post("/app/passwords/7/reveal", json={"pin": PIN})
+        self.assertEqual(shown.headers["Cache-Control"], "no-store")
+        self.client.post("/app/passwords/7/update", json={"pin": PIN, "label": "Card", "password": "new"})
+        sent = json.loads(self.backend_requests[-1].content)
+        self.assertEqual(sent, {"label": "Card", "password": "new"})
+
+    def test_a_missing_pin_or_an_unreachable_sentia_stops_it(self):
+        self.sign_in()
+        self.assertEqual(self.client.post("/app/passwords/7/delete", json={}).status_code, 400)
+        self.sentia_up = False
+        self.assertEqual(self.client.post("/app/passwords/7/delete", json={"pin": PIN}).status_code, 409)
+        self.assertEqual(self.backend_requests, [])
+
+    def test_confirming_a_password_change_does_not_unlock_hidden_items(self):
+        self.sign_in()
+        self.client.post("/app/passwords/7/reveal", json={"pin": PIN})
+        self.assertEqual(self.client.get("/app/hidden").status_code, 423)
+
+    def test_only_the_signed_in_owner_can_try(self):
+        self.assertEqual(self.client.post("/app/passwords/7/reveal", json={"pin": PIN}).status_code, 401)
+        self.sign_in("stranger")
+        self.assertEqual(self.client.post("/app/passwords/7/reveal", json={"pin": PIN}).status_code, 403)
+        self.assertEqual(self.backend_requests, [])
+
 
 class HiddenPinTests(GatewayTestCase):
     """Hidden documents wait for the PIN that Luna Sentia checks."""

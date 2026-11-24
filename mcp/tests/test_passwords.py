@@ -59,6 +59,25 @@ class SavedPasswordTests(LexiaServiceTestCase):
         with self.assertRaises(FileNotFoundError):
             self.passwords.forget(saved["password_id"])
 
+    def test_a_saved_password_can_be_shown_and_changed(self):
+        saved = self.passwords.save("Card", "first", "credit_card_statement")
+        shown = self.passwords.reveal(saved["password_id"])
+        self.assertEqual((shown["label"], shown["password"]), ("Card", "first"))
+        # A blank password keeps the old one; the label and type still change.
+        updated = self.passwords.update(saved["password_id"], "  HDFC   card ", "", None)
+        self.assertEqual((updated["status"], updated["label"], updated["doc_type"]), ("updated", "HDFC card", None))
+        self.assertNotIn("encrypted_password", updated)
+        self.assertEqual(self.passwords.reveal(saved["password_id"])["password"], "first")
+        self.passwords.update(saved["password_id"], "HDFC card", "second", "credit_card_statement")
+        self.assertEqual(self.passwords.reveal(saved["password_id"])["password"], "second")
+        self.assertEqual([password for _, password in self.passwords.candidates()], ["second"])
+        with self.assertRaisesRegex(ValueError, "label"):
+            self.passwords.update(saved["password_id"], " ", "x")
+        with self.assertRaises(FileNotFoundError):
+            self.passwords.update(99, "Gone", "x")
+        with self.assertRaises(FileNotFoundError):
+            self.passwords.reveal(99)
+
     def test_without_an_encryption_key_nothing_is_saved_or_tried(self):
         keyless = SavedPasswords(FakePasswordRepository(), "")
         with self.assertRaisesRegex(ValueError, "ENCRYPTION_KEY"):

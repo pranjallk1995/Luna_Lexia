@@ -499,6 +499,12 @@ your own database schema, with the key Lexia derives from its API token (like th
 sign-ins), and are listed only by label; a new API token makes them unreadable, so save them
 again after changing it.
 
+On that page, each saved password can be shown (it closes by itself after a minute), edited
+(label, document type, or a new password; an empty password keeps the old one), or deleted.
+Each of these asks for your Luna PIN, the same one that unlocks hidden documents. The UI
+gateway checks it with Luna Sentia every time, so Sentia's lockout after wrong guesses applies,
+and confirming one does not unlock hidden documents. The MCP tools never return a password.
+
 ### How bulk imports run and resume
 
 Drive folder imports, Gmail searches, and bulk uploads become background jobs in

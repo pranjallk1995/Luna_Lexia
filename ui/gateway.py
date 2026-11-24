@@ -54,7 +54,7 @@ PROXIED_ROUTES = tuple(
         ("POST", rf"/api/imports/{JOB}/retry"),
         ("GET", r"/api/passwords"),
         ("POST", r"/api/passwords"),
-        ("DELETE", r"/api/passwords/\d+"),
+        # Showing, changing, and deleting a saved password go through /app/passwords, which asks for the PIN.
     )
 )
 EXTRACTING = re.compile(r"/api/documents|.*/reextract")
@@ -279,6 +279,45 @@ class UIGateway:
         self.pin.lock(self.token(request))
         return JSONResponse({"unlocked": False})
 
+    # Saved passwords: showing, changing, or deleting one takes the PIN every time
+
+    def pin_confirmed(self, method: str, backend_path: str, *, secret: bool = False):
+        """Check the PIN sent with the request, then send the rest of it to ``backend_path``."""
+
+        async def endpoint(request: Request) -> Response:
+            try:
+                payload = await request.json()
+                if not isinstance(payload, dict):
+                    raise ValueError
+            except ValueError:
+                return JSONResponse({"error": "Send the PIN as JSON."}, status_code=400)
+            pin = str(payload.pop("pin", "") or "")[:32]
+            if not pin:
+                return JSONResponse({"error": "Enter your PIN to confirm."}, status_code=400)
+            try:
+                status, answer = await self.pin.check(self.token(request), pin)
+            except httpx.HTTPError:
+                # Not a 5xx: Cloudflare would show its own error page instead of this message.
+                return JSONResponse({"error": SENTIA_AWAY}, status_code=409)
+            if status != 200:
+                return JSONResponse({"error": "Wrong PIN.", **answer}, status_code=status)
+            path = backend_path.format(password_id=request.path_params["password_id"])
+            try:
+                response = await self.backend.request(
+                    method, path, json=payload if method == "POST" else None, timeout=UIConfig.API_TIMEOUT_SECONDS
+                )
+            except httpx.HTTPError:
+                return JSONResponse({"error": UNAVAILABLE}, status_code=502)
+            headers = {"Cache-Control": "no-store"} if secret else None
+            return Response(
+                response.content,
+                status_code=response.status_code,
+                media_type=response.headers.get("content-type"),
+                headers=headers,
+            )
+
+        return endpoint
+
     # Backend
 
     @staticmethod
@@ -338,6 +377,21 @@ class UIGateway:
                 Route("/app/hidden/unlock", self.protected(self.unlock), methods=["POST"]),
                 Route("/app/hidden/lock", self.protected(self.lock), methods=["POST"]),
                 Route("/app/hidden", self.protected(self.unlocked_only(self.collection("/api/hidden/documents")))),
+                Route(
+                    "/app/passwords/{password_id:int}/reveal",
+                    self.protected(self.pin_confirmed("GET", "/api/passwords/{password_id}/password", secret=True)),
+                    methods=["POST"],
+                ),
+                Route(
+                    "/app/passwords/{password_id:int}/update",
+                    self.protected(self.pin_confirmed("POST", "/api/passwords/{password_id}")),
+                    methods=["POST"],
+                ),
+                Route(
+                    "/app/passwords/{password_id:int}/delete",
+                    self.protected(self.pin_confirmed("DELETE", "/api/passwords/{password_id}")),
+                    methods=["POST"],
+                ),
                 Route("/app/thumbnails/{name}", self.protected(self.guarded(self.thumbnail))),
                 Route("/app/pages/{name}/{index:int}", self.protected(self.guarded(self.page))),
                 Route("/app/files/{name}", self.protected(self.guarded(self.file))),

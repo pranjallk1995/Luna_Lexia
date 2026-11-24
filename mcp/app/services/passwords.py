@@ -5,7 +5,8 @@ person saves it once ("HDFC card statement", for credit_card_statement) and a lo
 of that kind opens by itself. A locked PDF is tried with the passwords saved for its
 document type first, when the caller says what it is (ChatGPT's doc_type), then with every
 other saved password; the ones that worked lately go first. Passwords are encrypted with
-the same key as the Google sign-ins, and listed only by their labels.
+the same key as the Google sign-ins, and listed only by their labels. The UI can show or
+change one only after its gateway has checked the person's Luna PIN; the MCP tools never show one.
 """
 
 from __future__ import annotations
@@ -33,18 +34,46 @@ class SavedPasswords:
         self.repository = repository
         self.cipher = Fernet(encryption_key.encode()) if encryption_key else None
 
-    def save(self, label: str, password: str, doc_type: str | None = None) -> dict[str, Any]:
+    def checked(self, label: str, password: str, doc_type: str | None, *, keep_password: bool = False) -> tuple[str, str]:
+        """The tidied label and password, or a ValueError saying what is wrong with them."""
         if self.cipher is None:
             raise ValueError("Set LUNALEXIA_TOKEN_ENCRYPTION_KEY (or the API token) before saving passwords.")
         label, password = " ".join((label or "").split())[: self.MAX_LABEL], password or ""
         if not label:
             raise ValueError("Give the password a label, such as 'HDFC card statement'.")
-        if not password or len(password) > self.MAX_PASSWORD:
+        if (not password and not keep_password) or len(password) > self.MAX_PASSWORD:
             raise ValueError(f"The password must be 1 to {self.MAX_PASSWORD} characters.")
         if doc_type:
             document_type(doc_type)
-        encrypted = self.cipher.encrypt(password.encode()).decode()
-        return {"status": "saved", **self.repository.add(label, doc_type or None, encrypted)}
+        return label, password
+
+    def encrypt(self, password: str) -> str:
+        return self.cipher.encrypt(password.encode()).decode()
+
+    def save(self, label: str, password: str, doc_type: str | None = None) -> dict[str, Any]:
+        label, password = self.checked(label, password, doc_type)
+        return {"status": "saved", **self.repository.add(label, doc_type or None, self.encrypt(password))}
+
+    def update(self, password_id: int, label: str, password: str | None = None, doc_type: str | None = None) -> dict[str, Any]:
+        """Rename a saved password, change its document type, and, when ``password`` is given, the password."""
+        label, password = self.checked(label, password or "", doc_type, keep_password=True)
+        row = self.repository.update(password_id, label, doc_type or None, self.encrypt(password) if password else None)
+        if row is None:
+            raise FileNotFoundError(f"No saved password has id {password_id}.")
+        return {"status": "updated", **row}
+
+    def reveal(self, password_id: int) -> dict[str, Any]:
+        """The saved password itself, for its owner once the UI gateway has checked their PIN."""
+        if self.cipher is None:
+            raise ValueError("Set LUNALEXIA_TOKEN_ENCRYPTION_KEY (or the API token) before saving passwords.")
+        row = self.repository.secret(password_id)
+        if row is None:
+            raise FileNotFoundError(f"No saved password has id {password_id}.")
+        try:
+            password = self.cipher.decrypt(row["encrypted_password"].encode()).decode()
+        except InvalidToken:
+            raise ValueError("This password was saved under another key and cannot be read. Save it again.") from None
+        return {"password_id": row["password_id"], "label": row["label"], "doc_type": row["doc_type"], "password": password}
 
     def listing(self) -> dict[str, Any]:
         rows = self.repository.listing()

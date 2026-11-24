@@ -432,6 +432,18 @@ class FakePasswordRepository:
     def to_try(self):
         return sorted(self.rows, key=lambda row: (-(row["last_worked_at"] or 0), -row["times_worked"], row["password_id"]))
 
+    def secret(self, password_id):
+        return next((dict(row) for row in self.rows if row["password_id"] == password_id), None)
+
+    def update(self, password_id, label, doc_type, encrypted_password):
+        for row in self.rows:
+            if row["password_id"] == password_id:
+                row.update(label=label, doc_type=doc_type)
+                if encrypted_password is not None:
+                    row["encrypted_password"] = encrypted_password
+                return {key: value for key, value in row.items() if key != "encrypted_password"}
+        return None
+
     def delete(self, password_id):
         before = len(self.rows)
         self.rows = [row for row in self.rows if row["password_id"] != password_id]

@@ -77,8 +77,8 @@ class HiddenPin:
         state = response.json()
         return {**answer, "pin_set": bool(state.get("pin_set")), "locked_seconds": int(state.get("locked_seconds") or 0)}
 
-    async def unlock(self, token: str, pin: str) -> tuple[int, dict[str, Any]]:
-        """Ask Sentia whether ``pin`` is right; unlock this session if it is."""
+    async def check(self, token: str, pin: str) -> tuple[int, dict[str, Any]]:
+        """Ask Sentia whether ``pin`` is right, without unlocking anything: (200, {}) if it is."""
         response = await self.client.post(
             f"{self.internal_url}/pin/verify", json={"pin": pin}, headers={SSOConfig.SESSION_HEADER: token}
         )
@@ -89,11 +89,19 @@ class HiddenPin:
         except ValueError:
             body = {}
         if response.status_code == 200 and body.get("ok") is True:
+            return 200, {}
+        status = response.status_code if response.status_code != 200 else 403
+        return status, {key: value for key, value in body.items() if key != "ok"}
+
+    async def unlock(self, token: str, pin: str) -> tuple[int, dict[str, Any]]:
+        """Ask Sentia whether ``pin`` is right; unlock this session if it is."""
+        status, answer = await self.check(token, pin)
+        if status == 200:
             now = time.monotonic()
             self.unlocks[self.key(token)] = (now + self.IDLE_SECONDS, now + self.MOST_SECONDS)
             self.forget_expired(now)
             return 200, {"unlocked": True}
-        return response.status_code, {key: value for key, value in body.items() if key != "ok"}
+        return status, answer
 
     def forget_expired(self, now: float) -> None:
         self.unlocks = {key: deadlines for key, deadlines in self.unlocks.items() if min(deadlines) > now}
