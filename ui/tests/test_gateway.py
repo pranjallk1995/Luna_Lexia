@@ -142,8 +142,13 @@ class ProxyTests(GatewayTestCase):
             ("POST", "/api/imports/gmail"),
             ("GET", "/api/imports/12345678-1234-1234-1234-123456789012"),
             ("POST", "/api/imports/12345678-1234-1234-1234-123456789012/retry"),
+            ("GET", "/api/passwords"),
+            ("POST", "/api/passwords"),
+            ("DELETE", "/api/passwords/7"),
         ):
             self.assertEqual(self.client.request(method, path).status_code, 200, path)
+        # Only a saved password's number can be deleted.
+        self.assertNotEqual(self.client.delete("/api/passwords/..%2Fdocuments").status_code, 200)
         self.assertEqual(self.backend_requests[1].url.raw_path, b"/api/documents/a%20b.pdf")
 
     def test_query_reaches_the_backend(self):

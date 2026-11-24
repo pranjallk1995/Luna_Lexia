@@ -52,6 +52,9 @@ PROXIED_ROUTES = tuple(
         ("GET", rf"/api/imports/{JOB}"),
         ("POST", r"/api/imports/(drive-folder|gmail|batch)"),
         ("POST", rf"/api/imports/{JOB}/retry"),
+        ("GET", r"/api/passwords"),
+        ("POST", r"/api/passwords"),
+        ("DELETE", r"/api/passwords/\d+"),
     )
 )
 EXTRACTING = re.compile(r"/api/documents|.*/reextract")

@@ -1,13 +1,14 @@
-import { ChevronDown, Cloud, Eye, Heart, LayoutGrid, List, Lock, LogOut, Mail, Upload, type LucideIcon } from "lucide-react";
+import { ChevronDown, Cloud, Eye, Heart, KeyRound, LayoutGrid, List, Lock, LogOut, Mail, Upload, type LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { useDriveStatus, useGmailStatus, type DriveStatus, type Section, type Settings } from "./api";
+import { useDriveStatus, useGmailStatus, usePasswords, type DriveStatus, type Section, type Settings } from "./api";
 import { Dialog } from "./components/Dialog";
 import { DrivePanel } from "./components/DrivePanel";
 import { Gallery } from "./components/Gallery";
 import { HiddenGate } from "./components/HiddenGate";
 import { Brand, ForbiddenPage, SignInPage, UnreachablePage } from "./components/Gate";
 import { GmailPanel } from "./components/GmailPanel";
+import { PasswordsPanel } from "./components/PasswordsPanel";
 import { UploadDialog } from "./components/UploadDialog";
 import { useSession } from "./http";
 import { remember, remembered } from "./lib";
@@ -20,8 +21,9 @@ const SECTIONS: { id: Section; label: string; icon: LucideIcon }[] = [
 ];
 
 // Upload Docs as a split button: the main part uploads from this device, the arrow opens Google Drive and Gmail,
-// each saying whether it is connected.
-type Source = "drive" | "gmail";
+// each saying whether it is connected, and the passwords tried on locked PDFs.
+type Source = "drive" | "gmail" | "passwords";
+const SOURCE_TITLES: Record<Source, string> = { drive: "Google Drive", gmail: "Gmail", passwords: "Saved passwords" };
 
 // Green only when Google says the saved sign-in works; orange when it has ended or Google could not be asked.
 function health(status: DriveStatus | undefined): { state: "ok" | "attention" | "off"; note: string } {
@@ -38,6 +40,7 @@ function UploadMenu({ busy, onUpload, onSource }: { busy: boolean; onUpload: () 
   const ref = useRef<HTMLDivElement>(null);
   const drive = useDriveStatus();
   const gmail = useGmailStatus();
+  const saved = usePasswords();
 
   useEffect(() => {
     if (!open) return;
@@ -55,10 +58,18 @@ function UploadMenu({ busy, onUpload, onSource }: { busy: boolean; onUpload: () 
     };
   }, [open]);
 
+  const count = saved.data?.length ?? 0;
   const items = [
-    { source: "drive" as Source, label: "Google Drive", icon: Cloud, status: drive.data },
-    { source: "gmail" as Source, label: "Gmail", icon: Mail, status: gmail.data },
-  ].map((item) => ({ ...item, ...health(item.status) }));
+    { source: "drive" as Source, label: "Google Drive", icon: Cloud, ...health(drive.data) },
+    { source: "gmail" as Source, label: "Gmail", icon: Mail, ...health(gmail.data) },
+    {
+      source: "passwords" as Source,
+      label: "Saved passwords",
+      icon: KeyRound,
+      state: "off" as const,
+      note: saved.data ? (count ? `${count} for locked PDFs` : "For locked PDFs") : "Checking…",
+    },
+  ];
   const attention = items.some((item) => item.state === "attention");
   const choose = (source: Source) => {
     setOpen(false);
@@ -75,7 +86,7 @@ function UploadMenu({ busy, onUpload, onSource }: { busy: boolean; onUpload: () 
       <button
         className="lv-button lv-button-primary lx-split-arrow"
         type="button"
-        aria-label="Import from Google Drive or Gmail"
+        aria-label="Import from Google Drive or Gmail, or saved passwords"
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
@@ -182,8 +193,10 @@ function Workspace({ logoutUrl, settings }: { logoutUrl: string; settings: Setti
 
       {uploading && <UploadDialog uploads={uploads} settings={settings} onClose={() => setUploading(false)} />}
       {source && (
-        <Dialog title={source === "drive" ? "Google Drive" : "Gmail"} size="large" onClose={() => setSource(null)}>
-          {source === "drive" ? <DrivePanel settings={settings} /> : <GmailPanel settings={settings} />}
+        <Dialog title={SOURCE_TITLES[source]} size={source === "passwords" ? undefined : "large"} onClose={() => setSource(null)}>
+          {source === "drive" && <DrivePanel settings={settings} />}
+          {source === "gmail" && <GmailPanel settings={settings} />}
+          {source === "passwords" && <PasswordsPanel />}
         </Dialog>
       )}
       <footer className="lv-footer">Luna Lexia{settings.version && ` · v${settings.version}`}</footer>

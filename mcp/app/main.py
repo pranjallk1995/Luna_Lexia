@@ -7,7 +7,13 @@ from app.core.config import AppConfig
 from app.data.database import Database
 from app.data.tenants import adopt_loose_files, remove_folder
 from app.transport.luna_mcp import LunaMCP
-from app.data.repositories import ChunkRepository, DocumentRepository, ImportRepository, PublicURLRepository
+from app.data.repositories import (
+    ChunkRepository,
+    DocumentRepository,
+    ImportRepository,
+    PasswordRepository,
+    PublicURLRepository,
+)
 from app.integrations.drive import DriveOAuth
 from app.integrations.gmail import GmailOAuth
 from app.integrations.embeddings import OllamaEmbedder
@@ -18,6 +24,7 @@ from app.integrations.remote import DocumentSourceResolver
 from app.services.application import LexiaService
 from app.services.documents import DocumentReader
 from app.services.imports import FileImporter, ImportJobs, ImportService
+from app.services.passwords import SavedPasswords
 from app.services.semantic import Chunker, SemanticIndex
 from app.services.showcase import ShowcaseSorter
 from app.transport.branding import ServerBranding
@@ -54,6 +61,9 @@ class LunaLexiaApplication:
         sources = DocumentSourceResolver(
             self.service.visible.decoder, config.max_document_bytes, config.max_upload_redirects
         )
+        # Saved passwords of locked PDFs, tried on every locked PDF uploaded or imported.
+        self.service.passwords = SavedPasswords(PasswordRepository(self.database), config.token_encryption_key)
+        self.service.visible.decoder.keyring = self.service.passwords
         imports = ImportRepository(self.database)
         password_finder = PasswordFinder(OllamaChat(config.ollama_url, config.document_model, config.context_tokens))
         jobs = ImportJobs(imports, FileImporter(self.service.visible, sources, imports, password_finder))

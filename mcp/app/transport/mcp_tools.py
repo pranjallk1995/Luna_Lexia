@@ -675,8 +675,13 @@ class LexiaMCPTools:
             To upload a local file from a shell or code sandbox, use
             create_upload_link instead of Base64.
 
-            password unlocks a protected PDF, which is then stored unlocked; ask
-            the user for it if the upload reports that the PDF is protected.
+            A protected PDF is stored unlocked. It is tried with password, then
+            with the user's saved passwords (those saved for doc_type first): so
+            pass doc_type when the user says what it is ("my card statement" ->
+            credit_card_statement). The reply's opened_with_saved_password names
+            the one that worked. If none opens it, tell the user, ask for the
+            password, upload again with it, and offer to save it with
+            save_document_password.
             Word (DOCX, DOC) and Excel (XLSX, XLS) files are converted to a PDF,
             one page per sheet, and stored under the same name with .pdf.
             doc_type skips guessing when the type is known. name is optional: the
@@ -695,6 +700,35 @@ class LexiaMCPTools:
         ) -> dict[str, Any]:
             """Add a small document from Base64. Prefer upload_document for attachments and URLs."""
             return await offload(upload, name, content_base64, None, None, password, doc_type)
+
+        passwords = self.service.passwords
+        if passwords is not None:
+
+            @server.tool()
+            async def save_document_password(
+                label: str, password: str, doc_type: DocTypeName | None = None
+            ) -> dict[str, Any]:
+                """Save the password of a kind of locked PDF, so the next one opens by itself.
+
+                label names it for the user ("HDFC card statement"); doc_type is the
+                kind of document it opens (credit_card_statement, payslip...), whose
+                locked uploads try it first; without one it is tried on any locked
+                PDF after the others. Stored encrypted; never shown again.
+                """
+                return await offload(passwords.save, label, password, doc_type)
+
+            @server.tool()
+            async def list_document_passwords() -> dict[str, Any]:
+                """List the saved passwords by label and doc_type, with when each last opened a PDF.
+
+                The passwords themselves are never returned.
+                """
+                return await offload(passwords.listing)
+
+            @server.tool()
+            async def forget_document_password(password_id: int) -> dict[str, Any]:
+                """Delete a saved password by its password_id from list_document_passwords."""
+                return await offload(passwords.forget, password_id)
 
         @server.tool()
         def create_upload_link(name: str, replace: bool = False) -> dict[str, Any]:

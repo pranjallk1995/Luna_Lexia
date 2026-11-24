@@ -114,6 +114,17 @@ CREATE TABLE IF NOT EXISTS import_items (
 );
 CREATE INDEX IF NOT EXISTS import_items_job_idx ON import_items (job_id, item_id);
 CREATE INDEX IF NOT EXISTS import_items_source_idx ON import_items (source, source_id, outcome);
+-- Passwords of locked PDFs the person saved ("HDFC card statement"), encrypted, each tried on a locked
+-- PDF: those of its document type first, then the rest, the ones that worked lately first.
+CREATE TABLE IF NOT EXISTS document_passwords (
+    password_id bigserial PRIMARY KEY,
+    label text NOT NULL,
+    doc_type text,
+    encrypted_password text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    last_worked_at timestamptz,
+    times_worked integer NOT NULL DEFAULT 0
+);
 -- What a job was asked to import, kept until it finishes so a restart can resume it;
 -- and each file's place in its job, so a resumed job never records a file twice.
 ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS request jsonb;

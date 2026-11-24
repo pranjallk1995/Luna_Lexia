@@ -150,6 +150,8 @@ class LexiaHTTPRoutes:
         self._register_hidden_documents()
         if self.service.imports is not None:
             self._register_imports()
+        if self.service.passwords is not None:
+            self._register_passwords()
 
     async def health(self, request: Request) -> dict:
         return {"status": "ok", "service": "luna-lexia"}
@@ -456,6 +458,27 @@ class LexiaHTTPRoutes:
         self.route("GET", "/api/imports", jobs)
         self.route("GET", "/api/imports/{job_id}", job)
         self.route("POST", "/api/imports/{job_id}/retry", retry, 201)
+
+    def _register_passwords(self) -> None:
+        """Saved passwords of locked PDFs: listed by label, saved and deleted; never sent back."""
+        passwords = self.service.passwords
+
+        async def listing(request: Request):
+            return await anyio.to_thread.run_sync(passwords.listing)
+
+        async def save(request: Request):
+            payload = await self.payload(request)
+            return await anyio.to_thread.run_sync(
+                passwords.save, str(payload.get("label") or ""), str(payload.get("password") or ""),
+                payload.get("doc_type") or None,
+            )
+
+        async def forget(request: Request):
+            return await anyio.to_thread.run_sync(passwords.forget, int(request.path_params["password_id"]))
+
+        self.route("GET", "/api/passwords", listing)
+        self.route("POST", "/api/passwords", save, 201)
+        self.route("DELETE", "/api/passwords/{password_id:int}", forget)
 
     def _register_hidden_documents(self) -> None:
         hidden = self.service.hidden

@@ -65,11 +65,17 @@ class DocumentPayloadDecoder:
         "This PDF is password-protected. Provide its password (Indian payslips and "
         "statements often use the PAN, date of birth, or a combination of both)."
     )
+    SAVE_HINT = (
+        " Once you know it, save it with save_document_password (and its doc_type), so "
+        "the next locked document of this kind opens by itself."
+    )
 
     def __init__(self, allowed_formats: dict[str, str], max_document_bytes: int, converter=None) -> None:
         self.allowed_formats = allowed_formats
         self.max_document_bytes = max_document_bytes
         self.converter = converter
+        # The person's saved passwords (services/passwords.py), tried on a locked PDF; set by the composition root.
+        self.keyring: Any = None
 
     @property
     def max_base64_chars(self) -> int:
@@ -146,12 +152,15 @@ class DocumentPayloadDecoder:
         path = Path(name)
         return str(path.with_suffix(".pdf")) if path.suffix.lower() in self.OFFICE_EXTENSIONS else name
 
-    def unlock(self, data: bytes, password: str | None = None) -> bytes:
+    def unlock(self, data: bytes, password: str | None = None, doc_type: str | None = None,
+               saved: bool = True) -> bytes:
         """Return PDF bytes that open without a password, verifying the PDF on the way.
 
         An unprotected PDF is returned unchanged (any password is ignored). A
         protected one is opened with ``password`` and re-saved without its
         security, so the vault can read it again later without the password.
+        Without one, or when it is wrong, the person's saved passwords are tried
+        (``saved``), those for ``doc_type`` first.
         """
         try:
             with open_pdf(data):
@@ -159,23 +168,41 @@ class DocumentPayloadDecoder:
         except pdfium.PdfiumError as error:
             if getattr(error, "err_code", None) != pdfium_c.FPDF_ERR_PASSWORD:
                 raise ValueError("Content is not a valid PDF.") from error
-        if not password:
-            raise ValueError(self.PASSWORD_REQUIRED_MESSAGE)
+        if password:
+            opened = self.opened(data, password)
+            if opened is not None:
+                return opened
+        tried = 0
+        if saved and self.keyring is not None:
+            for row, candidate in self.keyring.candidates(doc_type):
+                tried += 1
+                opened = self.opened(data, candidate)
+                if opened is not None:
+                    self.keyring.worked(row)
+                    return opened
+        also = f" None of your {tried} saved password{'s' if tried != 1 else ''} opened it either." if tried else ""
+        if password:
+            raise ValueError("The PDF password is incorrect." + also)
+        raise ValueError(self.PASSWORD_REQUIRED_MESSAGE + also + self.SAVE_HINT)
+
+    @staticmethod
+    def opened(data: bytes, password: str) -> bytes | None:
+        """The PDF re-saved without its security, or None when ``password`` does not open it."""
         try:
             with open_pdf(data, password) as document:
                 output = BytesIO()
                 document.save(output, flags=pdfium_c.FPDF_REMOVE_SECURITY)
-        except pdfium.PdfiumError as error:
-            raise ValueError("The PDF password is incorrect.") from error
+        except pdfium.PdfiumError:
+            return None
         return output.getvalue()
 
-    def prepare(self, name: str, data: bytes, password: str | None = None) -> bytes:
+    def prepare(self, name: str, data: bytes, password: str | None = None, doc_type: str | None = None) -> bytes:
         """Require ``data`` to match ``name``'s format; return the bytes to store."""
         data, detected = self.convert(data, self.detect_format(data))
         expected = self.allowed_formats[Path(name).suffix.lower()]
         if detected != expected:
             raise ValueError(f"Document content is {detected}, filename expects {expected}.")
-        return self.unlock(data, password) if detected == "PDF" else data
+        return self.unlock(data, password, doc_type) if detected == "PDF" else data
 
     def name_for(self, requested: str | None, detected: str) -> str:
         """Turn a requested name into a plain filename whose extension matches.

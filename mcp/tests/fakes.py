@@ -410,3 +410,35 @@ class FakeOfficeConverter:
     def to_pdf(self, data: bytes, file_format: str) -> bytes:
         self.calls.append(file_format)
         return payslip_pdf(f"{file_format} {hashlib.sha256(data).hexdigest()[:8]}")
+
+
+class FakePasswordRepository:
+    """Saved passwords in memory, ordered as the database orders them."""
+
+    def __init__(self):
+        self.rows: list[dict] = []
+        self.clock = 0
+
+    def add(self, label, doc_type, encrypted_password):
+        row = {"password_id": len(self.rows) + 1, "label": label, "doc_type": doc_type,
+               "encrypted_password": encrypted_password, "created_at": "now", "last_worked_at": None,
+               "times_worked": 0}
+        self.rows.append(row)
+        return {key: value for key, value in row.items() if key != "encrypted_password"}
+
+    def listing(self):
+        return [{key: value for key, value in row.items() if key != "encrypted_password"} for row in self.rows]
+
+    def to_try(self):
+        return sorted(self.rows, key=lambda row: (-(row["last_worked_at"] or 0), -row["times_worked"], row["password_id"]))
+
+    def delete(self, password_id):
+        before = len(self.rows)
+        self.rows = [row for row in self.rows if row["password_id"] != password_id]
+        return len(self.rows) < before
+
+    def worked(self, password_id):
+        self.clock += 1
+        for row in self.rows:
+            if row["password_id"] == password_id:
+                row["last_worked_at"], row["times_worked"] = self.clock, row["times_worked"] + 1

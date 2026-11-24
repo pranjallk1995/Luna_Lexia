@@ -75,7 +75,7 @@ the screenshot are blurred.
 ```text
 Upload (UI, MCP tool, upload link, or HTTP API)
   -> convert    a Word or Excel file becomes a PDF (LibreOffice), stored as that PDF
-  -> unlock     a password-protected PDF is opened with its password and stored unlocked
+  -> unlock     a password-protected PDF is opened with its password, or a saved one, and stored unlocked
   -> Docling    text layer, OCR for scanned pages, tables as Markdown, one entry per page
   -> classify   Pydantic AI agent: doc_type, title, summary, tags, confidence
   -> extract    Pydantic AI agent with the doc_type's schema as constrained JSON output
@@ -467,8 +467,8 @@ Then choose **Upload → Gmail → Connect Gmail**, type a
 **Import all**. Only PDFs, images, and Word and Excel files that were attached are imported, not images embedded in
 the mail, and a statement sent only as a link is not found. Files imported before are skipped.
 
-A locked PDF is tried with, in order: the password you gave, any password that already
-opened a file in this job, and what the local model works out from that mail. Banks usually
+A locked PDF is tried with, in order: the password you gave, your saved passwords (below),
+any password that already opened a file in this job, and what the local model works out from that mail. Banks usually
 give a rule rather than the password, so add the details it needs, such as your name, date of
 birth, and card's last digits. Each candidate is also tried in upper and lower case, and the
 model is only asked when the mail mentions a password. Files still locked are reported as `needs_password`; import again with
@@ -478,6 +478,26 @@ Your details and the job's passwords stay in memory for the length of the job. T
 stored or logged, so a job a restart cuts off reports its remaining locked files as
 `needs_password`. Mail is untrusted, so the model has no tools and its answers are only tried against that one PDF:
 a mail that fools it just leaves the PDF locked. Everything runs on Luna Sentia's local model.
+
+### Saved passwords for locked PDFs
+
+Banks and employers lock each month's statement or payslip with the same password. Save it
+once under **Upload → Saved passwords** (a label such as "HDFC card statement", the password,
+and the document type it opens), or ask ChatGPT or Claude to save it with
+`save_document_password`. From then on, every locked PDF you upload or import is tried with the
+saved passwords before you are asked for one:
+
+1. the password given with the upload, if any;
+2. the saved passwords for the document type the upload names (`doc_type`, such as
+   `credit_card_statement` when you tell ChatGPT it is your card statement);
+3. every other saved password, the ones that opened a PDF lately first.
+
+The reply names the saved password that worked (`opened_with_saved_password`), never the
+password. When none opens it, the upload fails saying how many were tried, so the assistant
+or the page asks you for it and can save it for next time. Passwords are stored encrypted in
+your own database schema, with the key Lexia derives from its API token (like the Google
+sign-ins), and are listed only by label; a new API token makes them unreadable, so save them
+again after changing it.
 
 ### How bulk imports run and resume
 
@@ -577,6 +597,7 @@ question -> embedding + full-text query -> cosine similarity and text rank -> fu
 - `upload_document` - add a PDF, PNG, JPEG, WebP, or Word or Excel file (stored as a PDF) from a chat attachment (`file`), `document_url`, or `content_base64`, with an optional `password` for protected PDFs and an optional `doc_type`. Names are corrected and deduplicated like Visia's.
 - `add_document` - add a small document from Base64.
 - `create_upload_link` - single-use HTTPS link for agents with a shell; accepts a `password` form field or query parameter.
+- `save_document_password` / `list_document_passwords` / `forget_document_password` - the passwords tried on every locked PDF (see [Saved passwords](#saved-passwords-for-locked-pdfs)); listed by label, never shown.
 - `replace_document` - replace a document's file and re-analyze it.
 - `reextract_document` - classify and extract again, optionally forcing a `doc_type`.
 - `update_document_metadata` / `update_documents_metadata` - edit titles, summaries, and tags; correct `extracted` fields (validated against the type's schema, with key facts and review flags recomputed); `mark_reviewed=true` clears review flags once a person confirms the details.

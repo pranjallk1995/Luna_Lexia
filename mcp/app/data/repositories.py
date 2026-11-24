@@ -386,6 +386,43 @@ class PublicURLRepository(Repository):
         return cursor.rowcount
 
 
+class PasswordRepository(Repository):
+    """Saved passwords of locked PDFs, encrypted; their labels and use are listed, never the password."""
+
+    LISTED = "password_id, label, doc_type, created_at, last_worked_at, times_worked"
+
+    def add(self, label: str, doc_type: str | None, encrypted_password: str) -> Row:
+        return self.fetch_one(
+            f"""INSERT INTO document_passwords (label, doc_type, encrypted_password) VALUES (%s, %s, %s)
+                RETURNING {self.LISTED}""",
+            (label, doc_type, encrypted_password),
+        )
+
+    def listing(self) -> list[Row]:
+        return self.fetch_all(f"SELECT {self.LISTED} FROM document_passwords ORDER BY label, password_id")
+
+    def to_try(self) -> list[Row]:
+        """Every saved password with its secret, the ones that worked lately first."""
+        return self.fetch_all(
+            """SELECT password_id, label, doc_type, encrypted_password FROM document_passwords
+               ORDER BY last_worked_at DESC NULLS LAST, times_worked DESC, password_id"""
+        )
+
+    def delete(self, password_id: int) -> bool:
+        with self.database.connect() as connection:
+            return connection.execute(
+                "DELETE FROM document_passwords WHERE password_id = %s", (password_id,)
+            ).rowcount > 0
+
+    def worked(self, password_id: int) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """UPDATE document_passwords SET last_worked_at = now(), times_worked = times_worked + 1
+                   WHERE password_id = %s""",
+                (password_id,),
+            )
+
+
 class ImportRepository(Repository):
     """The Drive and Gmail connections, import jobs, and the outcome of every imported file."""
 

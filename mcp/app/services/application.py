@@ -32,6 +32,7 @@ from app.data.storage import DocumentStorage
 from app.integrations.extraction import DocumentAnalyzer
 from app.integrations.office import OfficeConverter
 from app.integrations.parsing import DoclingParser
+from app.services.passwords import opened_with
 from app.services.documents import DocumentPayloadDecoder, PreviewRenderer
 from app.services.pipeline import DocumentPipeline
 from app.services.reanalysis import Reanalysis
@@ -498,7 +499,7 @@ class VisibleDocumentService(DocumentCollectionService):
         path = self.storage.path(name)
         if doc_type:
             document_type(doc_type)
-        data = self.decoder.prepare(name, data, password)
+        data = self.decoder.prepare(name, data, password, doc_type)
         exists = path.is_file()
         if replace and not exists:
             raise FileNotFoundError(f"Document {name!r} was not found.")
@@ -524,17 +525,21 @@ class VisibleDocumentService(DocumentCollectionService):
         duplicate rather than stored twice (LLM clients often retry uploads).
         """
         data, detected = self.decoder.convert(data, self.decoder.detect_format(data))
+        opened_with.set(None)
         if detected == "PDF":
-            data = self.decoder.unlock(data, password)
+            data = self.decoder.unlock(data, password, doc_type)
+        # A saved password that opened it is named in the reply, never the password itself.
+        unlocked = {"opened_with_saved_password": opened_with.get()["label"]} if opened_with.get() else {}
         duplicate = self.documents.find_visible_by_content(hashlib.sha256(data).hexdigest())
         if duplicate is not None:
             return {
                 "status": "duplicate",
                 "message": f"This document is already stored as {duplicate['name']!r}.",
                 **duplicate,
+                **unlocked,
             }
         name = self.storage.available_name(self.decoder.name_for(requested_name, detected))
-        result = {"status": "created", **self.ingest_bytes(name, data, doc_type=doc_type)}
+        result = {"status": "created", **self.ingest_bytes(name, data, doc_type=doc_type), **unlocked}
         if requested_name and name != requested_name:
             result["requested_name"] = requested_name
         return result
@@ -982,6 +987,8 @@ class LexiaService:
         self.semantic: Any = None
         # Set by the composition root: the ShowcaseSorter for the library's similarity order.
         self.showcase: Any = None
+        # Set by the composition root: the person's saved passwords of locked PDFs (services/passwords.py).
+        self.passwords: Any = None
         # Background re-analysis of stored documents, e.g. after a model change.
         self.reanalysis = tenancy.PerUser(lambda: Reanalysis(indexer))
 

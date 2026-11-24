@@ -1924,3 +1924,9 @@ html:has(.lv-bulk) .lv-toasts {
   color: var(--lv-text);
   font-size: var(--luna-text-body);
 }
+
+/* A saved password: its label, type and use, and Delete. */
+.lx-password {
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--lv-border);
+}

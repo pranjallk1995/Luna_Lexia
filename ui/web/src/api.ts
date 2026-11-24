@@ -360,3 +360,27 @@ export const gmail = {
   importSearch: (query: string, docType: string | null, password: string, passwordDetails: string) =>
     post<{ source: string }>("/api/imports/gmail", { query, doc_type: docType, password, password_details: passwordDetails }),
 };
+
+// Saved passwords of locked PDFs: tried on every locked upload or import, by label only; the password never comes back.
+
+export type SavedPassword = {
+  password_id: number;
+  label: string;
+  doc_type?: string | null;
+  created_at?: string | null;
+  last_worked_at?: string | null;
+  times_worked: number;
+};
+
+export const usePasswords = () =>
+  useQuery({
+    queryKey: ["passwords"],
+    queryFn: async () => (await request<{ passwords: SavedPassword[] }>("/api/passwords")).passwords,
+    staleTime: 0,
+  });
+
+export const passwords = {
+  save: (label: string, password: string, docType: string | null) =>
+    post<SavedPassword>("/api/passwords", { label, password, doc_type: docType }),
+  forget: (id: number) => remove(`/api/passwords/${id}`),
+};

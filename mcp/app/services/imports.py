@@ -160,15 +160,27 @@ class FileImporter:
         """The attachment without its password, trying the cheapest source of one first."""
         decoder = self.visible.decoder
         try:
-            return decoder.unlock(download.data) if decoder.detect_format(download.data) == "PDF" else download.data
+            if decoder.detect_format(download.data) != "PDF":
+                return download.data
+            return decoder.unlock(download.data, saved=False)
         except ValueError as error:
             if "password" not in str(error).lower():
                 raise ImportSkipped("failed", str(error)[:500]) from error
         secrets = self._secrets.get(job_id) or {}
         given = [password for password in (item.get("password"), secrets.get("password")) if password]
-        for password in itertools.chain(given, list(secrets.get("worked", [])), self.guesses(download, secrets)):
+        for password in given:
             try:
-                unlocked = decoder.unlock(download.data, password)
+                return decoder.unlock(download.data, password, saved=False)
+            except ValueError:
+                continue
+        try:
+            # The person's saved passwords, those of the job's document type first.
+            return decoder.unlock(download.data, None, item.get("doc_type"))
+        except ValueError:
+            pass
+        for password in itertools.chain(list(secrets.get("worked", [])), self.guesses(download, secrets)):
+            try:
+                unlocked = decoder.unlock(download.data, password, saved=False)
             except ValueError:
                 continue
             if "worked" in secrets and password not in secrets["worked"]:
