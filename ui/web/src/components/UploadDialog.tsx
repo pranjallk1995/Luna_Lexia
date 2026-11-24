@@ -1,12 +1,10 @@
-import { Cloud, Laptop, Mail, RefreshCw, UploadCloud } from "lucide-react";
+import { RefreshCw, UploadCloud } from "lucide-react";
 import { useState, type DragEvent } from "react";
 
 import { useDocumentTypes, type Settings } from "../api";
 import { displayName } from "../lib";
 import type { Uploads } from "../uploads";
 import { Dialog } from "./Dialog";
-import { DrivePanel } from "./DrivePanel";
-import { GmailPanel } from "./GmailPanel";
 import { useToast } from "./Toasts";
 
 type Props = {
@@ -130,24 +128,11 @@ function DeviceUpload({ uploads, settings }: Omit<Props, "onClose">) {
   );
 }
 
+// Files from this device; Google Drive and Gmail have their own buttons on the main page.
 export function UploadDialog({ uploads, settings, onClose }: Props) {
-  const [source, setSource] = useState<"device" | "drive" | "gmail">("device");
   return (
     <Dialog title="Upload documents" size="large" onClose={onClose}>
-      <div className="lv-tabs" role="tablist">
-        <button className={source === "device" ? "lv-tab lv-tab-active" : "lv-tab"} type="button" role="tab" aria-selected={source === "device"} onClick={() => setSource("device")}>
-          <Laptop size={15} /> This device
-        </button>
-        <button className={source === "drive" ? "lv-tab lv-tab-active" : "lv-tab"} type="button" role="tab" aria-selected={source === "drive"} onClick={() => setSource("drive")}>
-          <Cloud size={15} /> Google Drive
-        </button>
-        <button className={source === "gmail" ? "lv-tab lv-tab-active" : "lv-tab"} type="button" role="tab" aria-selected={source === "gmail"} onClick={() => setSource("gmail")}>
-          <Mail size={15} /> Gmail
-        </button>
-      </div>
-      {source === "device" && <DeviceUpload uploads={uploads} settings={settings} />}
-      {source === "drive" && <DrivePanel settings={settings} />}
-      {source === "gmail" && <GmailPanel settings={settings} />}
+      <DeviceUpload uploads={uploads} settings={settings} />
     </Dialog>
   );
 }

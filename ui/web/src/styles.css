@@ -125,6 +125,18 @@ a {
   flex: 0 0 7rem;
 }
 
+.lx-source {
+  position: relative;
+  white-space: nowrap;
+}
+
+.lx-connected-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: #4ade80;
+}
+
 /* Controls */
 
 .lv-button {
@@ -1081,10 +1093,17 @@ html:has(.lv-viewer[open]) {
     padding-inline: 0.65rem;
   }
 
-  .lv-sign-out {
+  .lv-sign-out,
+  .lx-source {
     flex: 0 0 auto;
     font-size: 0;
     gap: 0;
+  }
+
+  .lx-source .lx-connected-dot {
+    position: absolute;
+    top: 0.3rem;
+    right: 0.3rem;
   }
 
   .lv-nav-item span {
