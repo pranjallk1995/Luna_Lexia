@@ -73,7 +73,8 @@ class DocumentFiles:
         return value
 
     def collection(self, metadata: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Records with files on disk, newest first."""
+        """Records with files on disk, in the backend's order: the library's saved similarity order, or newest
+        first when it has none. (Sorting here by file date undid the similarity order on the page.)"""
         records = []
         for item in metadata:
             try:
@@ -83,7 +84,6 @@ class DocumentFiles:
             records.append(
                 {**item, "size_bytes": item.get("size_bytes") or stat.st_size, "version": stat.st_mtime_ns}
             )
-        records.sort(key=lambda record: record["version"], reverse=True)
         return records
 
     def thumbnail(self, name: str) -> bytes:

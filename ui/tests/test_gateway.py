@@ -96,6 +96,15 @@ class FileTests(GatewayTestCase):
         self.assertEqual(documents["a.png"]["size_bytes"], 99)
         self.assertGreater(documents["doc.pdf"]["size_bytes"], 0)
 
+    def test_documents_keep_the_backends_order_not_the_files_dates(self):
+        # The backend sends the library's similarity order; doc.pdf's newer file must not move it first.
+        import os
+        os.utime(self.document_dir / "a.png", ns=(1_000_000_000, 1_000_000_000))
+        os.utime(self.document_dir / "doc.pdf", ns=(9_000_000_000, 9_000_000_000))
+        self.sign_in()
+        names = [document["name"] for document in self.client.get("/app/documents").json()["documents"]]
+        self.assertEqual(names, ["a.png", "doc.pdf"])
+
     def test_thumbnail_of_a_pdf_and_an_image(self):
         self.sign_in()
         for name in ("a.png", "doc.pdf"):
