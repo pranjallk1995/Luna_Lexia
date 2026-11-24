@@ -125,6 +125,14 @@ a {
   flex: 0 0 7rem;
 }
 
+/* Google Drive and Gmail: their own row under the header, above the section tabs. */
+.lx-sources {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-bottom: 0.75rem;
+}
+
 .lx-source {
   position: relative;
   white-space: nowrap;
@@ -1093,17 +1101,15 @@ html:has(.lv-viewer[open]) {
     padding-inline: 0.65rem;
   }
 
-  .lv-sign-out,
-  .lx-source {
+  .lv-sign-out {
     flex: 0 0 auto;
     font-size: 0;
     gap: 0;
   }
 
-  .lx-source .lx-connected-dot {
-    position: absolute;
-    top: 0.3rem;
-    right: 0.3rem;
+  .lx-sources .lx-source {
+    flex: 1 1 0;
+    justify-content: center;
   }
 
   .lv-nav-item span {

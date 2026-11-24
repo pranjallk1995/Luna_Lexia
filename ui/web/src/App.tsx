@@ -89,8 +89,6 @@ function Workspace({ logoutUrl, settings }: { logoutUrl: string; settings: Setti
           >
             <List size={18} />
           </button>
-          <SourceButton source="drive" onOpen={() => setSource("drive")} />
-          <SourceButton source="gmail" onOpen={() => setSource("gmail")} />
           <button className="lv-button lv-button-primary lv-header-main" type="button" onClick={() => setUploading(true)}>
             <Upload size={17} />
             Upload Docs
@@ -101,6 +99,11 @@ function Workspace({ logoutUrl, settings }: { logoutUrl: string; settings: Setti
             Sign out
           </a>
         </div>
+      </div>
+
+      <div className="lx-sources" aria-label="Import from">
+        <SourceButton source="drive" onOpen={() => setSource("drive")} />
+        <SourceButton source="gmail" onOpen={() => setSource("gmail")} />
       </div>
 
       <nav className="lv-nav" aria-label="Gallery section">
