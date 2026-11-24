@@ -193,11 +193,34 @@ a {
   white-space: nowrap;
 }
 
-.lx-connected-dot {
+.lx-dot {
+  flex: none;
   width: 0.45rem;
   height: 0.45rem;
   border-radius: 50%;
+}
+
+.lx-dot-ok {
   background: #4ade80;
+}
+
+.lx-dot-warn {
+  background: #fb923c;
+}
+
+.lx-warn-text {
+  color: #fb923c !important;
+}
+
+/* On the menu's arrow: Google Drive or Gmail needs attention. */
+.lx-split-arrow {
+  position: relative;
+}
+
+.lx-split-alert {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.35rem;
 }
 
 /* Controls */

@@ -255,7 +255,14 @@ export function useDocumentTypes() {
 
 // Google Drive and bulk imports
 
-export type DriveStatus = { configured: boolean; connected: boolean; email?: string; sign_in_expired?: boolean };
+export type DriveStatus = {
+  configured: boolean;
+  connected: boolean;
+  email?: string;
+  sign_in_expired?: boolean;
+  // Google could not be asked whether the sign-in works (an outage, no network).
+  unreachable?: boolean;
+};
 export type DriveFolder = { folder_id: string; name: string };
 
 export type GmailAttachment = { source_id: string; name: string; subject: string; sender: string; date: string; imported: boolean };

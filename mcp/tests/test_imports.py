@@ -231,7 +231,9 @@ class ExpiredSignInTests(ImportTestCase):
         self.assertEqual((status["connected"], status["sign_in_expired"]), (True, False))
 
     def test_an_outage_does_not_look_like_a_lost_sign_in(self):
-        self.assertFalse(self.status_with(ConnectionError("no network"))["sign_in_expired"])
+        down = self.status_with(ConnectionError("no network"))
+        self.assertFalse(down["sign_in_expired"])
+        self.assertTrue(down["unreachable"])
 
     def test_no_connection_is_not_an_expiry(self):
         self.assertFalse(self.imports.drive_status()["sign_in_expired"])

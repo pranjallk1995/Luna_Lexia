@@ -1,7 +1,7 @@
 import { ChevronDown, Cloud, Eye, Heart, LayoutGrid, List, Lock, LogOut, Mail, Upload, type LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { useDriveStatus, useGmailStatus, type Section, type Settings } from "./api";
+import { useDriveStatus, useGmailStatus, type DriveStatus, type Section, type Settings } from "./api";
 import { Dialog } from "./components/Dialog";
 import { DrivePanel } from "./components/DrivePanel";
 import { Gallery } from "./components/Gallery";
@@ -22,6 +22,16 @@ const SECTIONS: { id: Section; label: string; icon: LucideIcon }[] = [
 // Upload Docs as a split button: the main part uploads from this device, the arrow opens Google Drive and Gmail,
 // each saying whether it is connected.
 type Source = "drive" | "gmail";
+
+// Green only when Google says the saved sign-in works; orange when it has ended or Google could not be asked.
+function health(status: DriveStatus | undefined): { state: "ok" | "attention" | "off"; note: string } {
+  if (!status) return { state: "off", note: "Checking…" };
+  if (!status.configured) return { state: "off", note: "Not set up" };
+  if (!status.connected) return { state: "off", note: "Not connected" };
+  if (status.sign_in_expired) return { state: "attention", note: "Sign-in expired: reconnect" };
+  if (status.unreachable) return { state: "attention", note: "Can't reach Google" };
+  return { state: "ok", note: status.email ?? "Connected" };
+}
 
 function UploadMenu({ busy, onUpload, onSource }: { busy: boolean; onUpload: () => void; onSource: (source: Source) => void }) {
   const [open, setOpen] = useState(false);
@@ -45,10 +55,11 @@ function UploadMenu({ busy, onUpload, onSource }: { busy: boolean; onUpload: () 
     };
   }, [open]);
 
-  const items: { source: Source; label: string; icon: LucideIcon; status: typeof drive.data }[] = [
-    { source: "drive", label: "Google Drive", icon: Cloud, status: drive.data },
-    { source: "gmail", label: "Gmail", icon: Mail, status: gmail.data },
-  ];
+  const items = [
+    { source: "drive" as Source, label: "Google Drive", icon: Cloud, status: drive.data },
+    { source: "gmail" as Source, label: "Gmail", icon: Mail, status: gmail.data },
+  ].map((item) => ({ ...item, ...health(item.status) }));
+  const attention = items.some((item) => item.state === "attention");
   const choose = (source: Source) => {
     setOpen(false);
     onSource(source);
@@ -70,22 +81,21 @@ function UploadMenu({ busy, onUpload, onSource }: { busy: boolean; onUpload: () 
         onClick={() => setOpen((current) => !current)}
       >
         <ChevronDown size={16} />
+        {attention && <span className="lx-dot lx-dot-warn lx-split-alert" aria-label="Google Drive or Gmail needs attention" />}
       </button>
       {open && (
         <div className="lx-split-menu" role="menu">
-          {items.map(({ source, label, icon: Icon, status }) => {
-            const connected = Boolean(status?.configured && status.connected);
-            return (
-              <button className="lx-split-item" type="button" role="menuitem" key={source} onClick={() => choose(source)}>
-                <Icon size={16} />
-                <span className="lx-split-label">
-                  {label}
-                  <small>{connected ? status?.email : status && !status.configured ? "Not set up" : "Not connected"}</small>
-                </span>
-                {connected && <span className="lx-connected-dot" aria-label="Connected" />}
-              </button>
-            );
-          })}
+          {items.map(({ source, label, icon: Icon, state, note }) => (
+            <button className="lx-split-item" type="button" role="menuitem" key={source} onClick={() => choose(source)}>
+              <Icon size={16} />
+              <span className="lx-split-label">
+                {label}
+                <small className={state === "attention" ? "lx-warn-text" : undefined}>{note}</small>
+              </span>
+              {state === "ok" && <span className="lx-dot lx-dot-ok" aria-label="Connected" />}
+              {state === "attention" && <span className="lx-dot lx-dot-warn" aria-label="Needs attention" />}
+            </button>
+          ))}
         </div>
       )}
     </div>

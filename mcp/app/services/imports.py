@@ -434,23 +434,34 @@ class ImportService:
 
     def drive_status(self) -> dict[str, Any]:
         connection = self.imports.drive_connection()
+        check = self.sign_in_check(lambda: self.drive().account_email(), DriveSignInExpired, "Google Drive") \
+            if connection else "ok"
         return {
             "configured": self.oauth.configured and self.cipher is not None,
             "connected": connection is not None,
             "email": connection["email"] if connection else None,
             "connected_at": connection["connected_at"] if connection else None,
-            "sign_in_expired": connection is not None and self.sign_in_expired(),
+            "sign_in_expired": check == "expired",
+            # Google could not be asked (an outage, no network): the sign-in may be fine, but nothing imports now.
+            "unreachable": check == "unreachable",
         }
+
+    @staticmethod
+    def sign_in_check(ask: Any, expired: type[Exception], name: str) -> str:
+        """Ask Google whether a saved sign-in still works: "ok", "expired", or "unreachable" (other trouble,
+        which must not look like a lost sign-in)."""
+        try:
+            ask()
+        except expired:
+            return "expired"
+        except Exception as error:  # noqa: BLE001 - reported as unreachable
+            logger.warning("Could not check the %s sign-in: %s", name, type(error).__name__)
+            return "unreachable"
+        return "ok"
 
     def sign_in_expired(self) -> bool:
         """Ask Google whether the saved sign-in still works; other trouble is not an expiry."""
-        try:
-            self.drive().account_email()
-        except DriveSignInExpired:
-            return True
-        except Exception as error:  # noqa: BLE001 - an outage must not look like a lost sign-in
-            logger.warning("Could not check the Google Drive sign-in: %s", type(error).__name__)
-        return False
+        return self.sign_in_check(lambda: self.drive().account_email(), DriveSignInExpired, "Google Drive") == "expired"
 
     def authorization_url(self) -> str:
         if self.cipher is None:
@@ -490,23 +501,20 @@ class ImportService:
 
     def gmail_status(self) -> dict[str, Any]:
         connection = self.imports.gmail_connection()
+        check = self.sign_in_check(lambda: self.gmail().account_email(), GmailSignInExpired, "Gmail") \
+            if connection else "ok"
         return {
             "configured": bool(self.gmail_oauth and self.gmail_oauth.configured and self.cipher is not None),
             "connected": connection is not None,
             "email": connection["email"] if connection else None,
             "connected_at": connection["connected_at"] if connection else None,
-            "sign_in_expired": connection is not None and self.gmail_sign_in_expired(),
+            "sign_in_expired": check == "expired",
+            "unreachable": check == "unreachable",
         }
 
     def gmail_sign_in_expired(self) -> bool:
         """Ask Google whether the saved sign-in still works; other trouble is not an expiry."""
-        try:
-            self.gmail().account_email()
-        except GmailSignInExpired:
-            return True
-        except Exception as error:  # noqa: BLE001 - an outage must not look like a lost sign-in
-            logger.warning("Could not check the Gmail sign-in: %s", type(error).__name__)
-        return False
+        return self.sign_in_check(lambda: self.gmail().account_email(), GmailSignInExpired, "Gmail") == "expired"
 
     def gmail_authorization_url(self) -> str:
         if self.gmail_oauth is None or self.cipher is None:
