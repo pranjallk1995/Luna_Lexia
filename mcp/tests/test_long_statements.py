@@ -6,7 +6,7 @@ from fakes import ScriptedChat, StubParser, image_bytes
 
 from app.core.config import AppConfig
 from app.core.models import DocumentContent, MetadataRules
-from app.core.schemas import CapitalGainsStatement
+from app.core.schemas import CapitalGainsStatement, HealthReport
 from app.integrations.extraction import DocumentAnalyzer
 from app.integrations.parsing import DoclingParser
 from app.services.documents import DocumentReader
@@ -132,3 +132,63 @@ class PrefetchTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+LAB_HEADER = "| Test Name | Result | Unit | Bio. Ref. Interval | Method |"
+LAB_TESTS = [f"Analyte {n}" for n in range(1, 28)] + ["Protein, Total", "Cholesterol - Total", "Total Leucocyte Count"]
+LAB_TABLE = "\n".join(
+    [
+        "COMPREHENSIVE FULL BODY CHECKUP",
+        LAB_HEADER,
+        "|---|---|---|---|---|",
+        *(f"| {name} | {n}.5 | mg/dL | 1 - 99 | Calculated |" for n, name in enumerate(LAB_TESTS, start=1)),
+    ]
+)
+
+
+class HealthReportRowTests(unittest.TestCase):
+    def test_tests_named_total_are_rows_of_a_health_report(self):
+        content = DocumentContent("PDF", [LAB_TABLE], "test")
+        _, lab_rows = DocumentAnalyzer.table_rows(content, totals_are_rows=True)
+        self.assertEqual(len(lab_rows), len(LAB_TESTS))
+        self.assertIn("Protein, Total", lab_rows[-3][1])
+        _, finance_rows = DocumentAnalyzer.table_rows(content)
+        self.assertEqual(len(finance_rows), len(LAB_TESTS) - 3)
+
+    def test_only_result_tables_give_a_lab_reports_rows(self):
+        page = "\n".join([
+            "| Test Name | Result | Unit | Bio. Ref. Interval | Method |", "|---|---|---|---|---|",
+            "| Urine Routine & Microscopy |  |  |  |  |", "| Glucose | Negative |  | Negative | Glucose-oxidase |",
+            "", "Customer Name : Asha Rao",
+            "| Test Name | Result | Unit | Bio. Ref. Interval | Method |", "|---|---|---|---|---|",
+            "| Estradiol (E2) | < 24 | pg/mL | 11-44 | CMIA |",
+            "", "| Risk Group | LDL-C, mg/dL | Non-HDL-C, mg/dL |", "|---|---|---|",
+            "| Low-risk group | <100 | <130 |", "| High-risk group | <70 | <100 |", "| Very high-risk group | <50 | <80 |",
+        ])
+        outline, lab_rows = DocumentAnalyzer.table_rows(
+            DocumentContent("PDF", [page], "test"), True, HealthReport.RESULT_TABLE
+        )
+        self.assertEqual([row.split("|")[1].strip() for _, row in lab_rows], ["Urine Routine & Microscopy", "Glucose", "Estradiol (E2)"])
+        self.assertIn("Low-risk group", outline)
+        self.assertIn("Customer Name : Asha Rao", outline)
+
+    def test_long_lab_reports_are_read_in_batches(self):
+        def results(first: int, last: int) -> dict:
+            return {"results": [
+                {"test_name": LAB_TESTS[n - 1], "value": n + 0.5, "unit": "mg/dL", "reference_low": 1, "reference_high": 99}
+                for n in range(first, last + 1)
+            ]}
+
+        chat = ScriptedChat([
+            {**CLASSIFICATION, "doc_type": "health_report", "title": "Lab report"},
+            {"lab_name": "Acme Labs", "collection_date": "18/04/2026"},
+            results(1, 25),
+            results(26, 30),
+        ])
+        analyzer = DocumentAnalyzer(chat, DocumentReader(), 24000, 3)
+        pipeline = DocumentPipeline(StubParser(DocumentContent("PDF", [LAB_TABLE], "test")), analyzer, MetadataRules(32, frozenset()))
+        analysis = pipeline.run(image_bytes(), "health_report")[0]
+        self.assertEqual(len(analysis.extracted["results"]), len(LAB_TESTS))
+        self.assertEqual(analysis.extracted["results"][-1]["test_name"], "Total Leucocyte Count")
+        self.assertIn("is a row of its own", str(chat.requests[2]))
+        self.assertEqual(analysis.review_flags, [])

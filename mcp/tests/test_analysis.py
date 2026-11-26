@@ -14,6 +14,7 @@ from app.core.schemas import (
     BankStatement,
     EducationalCertificate,
     Form16,
+    HealthReport,
     IdentityDocument,
     InsurancePolicy,
     Invoice,
@@ -284,6 +285,112 @@ class CareerAndPersonalTypeTests(unittest.TestCase):
         self.assertEqual(set(schema["properties"]["doc_type"]["enum"]), set(DOCUMENT_TYPES))
         for key in ("resume", "offer_letter", "rental_agreement", "insurance_policy"):
             self.assertIn(key, DOCUMENT_TYPES)
+
+
+class HealthReportTests(unittest.TestCase):
+    RESULT = {"panel": "Lipid Profile", "test_name": "Cholesterol - LDL", "value": "153", "unit": "mg/dl",
+              "reference_range": "<= 99.9", "reference_low": "100", "reference_high": "99.9"}
+
+    def report(self, **fields) -> HealthReport:
+        return HealthReport.model_validate({
+            "lab_name": "Tata 1mg Labs", "collection_date": "18/04/2026", "report_date": "18-Apr-2026",
+            "package_name": "Comprehensive Silver Full Body Checkup", "results": [self.RESULT], **fields,
+        })
+
+    def test_results_read_as_printed(self):
+        report = self.report(results=[
+            self.RESULT,
+            {"test_name": "Glucose", "panel": "Urine Routine & Microscopy", "value_text": "Negative", "reference_range": "Negative"},
+            {"test_name": "Absolute Neutrophil Count", "value": 2720, "value_text": "2.72", "reference_range": "2 - 7"},
+            {"test_name": "Estradiol (E2)", "value_text": "< 24", "unit": "pg/mL", "reference_range": "11-44"},
+            {"test_name": "Fasting Plasma Glucose", "value": 83, "reference_range": "99 or below"},
+        ])
+        ldl, glucose, neutrophils, estradiol, fasting = report.results
+        # Only the printed upper limit: the model's lower limit came from a table of categories.
+        self.assertEqual((ldl.value, ldl.reference_low, ldl.reference_high), (153.0, None, 99.9))
+        self.assertTrue(ldl.out_of_range())
+        self.assertEqual((glucose.value, glucose.value_text, glucose.panel), (None, "Negative", "Urine Routine & Microscopy"))
+        self.assertEqual((neutrophils.value, neutrophils.reference_low, neutrophils.reference_high), (2.72, 2.0, 7.0))
+        self.assertEqual((estradiol.value, estradiol.value_text, estradiol.panel), (None, "< 24", "Hormones"))
+        self.assertEqual((fasting.reference_low, fasting.reference_high), (None, 99.0))
+        self.assertEqual(report.review_flags(), [])
+
+    def test_a_health_report_has_a_lab_and_date_but_no_financial_year(self):
+        facts = self.report().key_facts()
+        self.assertEqual((facts.issuer, facts.document_date, facts.financial_year), ("Tata 1mg Labs", date(2026, 4, 18), None))
+
+    def test_section_rows_go_and_panels_get_one_name(self):
+        report = self.report(results=[
+            {"test_name": "Lipid Profile", "panel": "Lipid Profile", "value_text": "18 Apr 26"},
+            {"test_name": "Uric Acid", "panel": "Uric Acid", "value": 5.5},
+            {"test_name": "MCV", "panel": "COMPREHENSIVE SILVER FULL BODY CHECKUP WITH SMART REPORT", "value": 85.3},
+            {"test_name": "Iron Serum", "panel": "Iron Studies, Basic", "value": 145},
+            {"test_name": "Glycosylated Hemoglobin (HbA1c)", "value": 5.1},
+            {"test_name": "Something rare", "panel": "Special Tests", "value": 1},
+        ])
+        self.assertEqual(
+            [(result.test_name, result.panel) for result in report.results],
+            [("Uric Acid", "Kidney Function"), ("MCV", "Complete Blood Count"), ("Iron Serum", "Iron Studies"),
+             ("Glycosylated Hemoglobin (HbA1c)", "Diabetes Profile"),
+             ("Something rare", "Special Tests")],
+        )
+
+    def test_the_summary_and_detail_pages_of_one_test_are_merged(self):
+        summary = {"test_name": "Cholesterol-LDL", "value": 153, "reference_range": "<= 99.9", "previous_value": 170,
+                   "previous_date": "04 Oct 2025"}
+        detail = {**self.RESULT, "reference_range": "Desirable: <100", "method": "Calculated"}
+        sgot = {"test_name": "Aspartate Transaminase (SGOT)", "value": 23, "unit": "U/L"}
+        sgot_detail = {"test_name": "SGOT (Aspartate Aminotransferase)", "value": 23, "unit": "U/L", "method": "NADH"}
+        report = self.report(results=[
+            summary, detail, sgot, sgot_detail,
+            {"test_name": "TSH", "value": 1.226}, {"test_name": "TSH", "value": 1.205},
+            {"test_name": "Red blood cell", "value": 0, "unit": "/hpf"}, {"test_name": "Red Blood Cells", "value": "0.00", "unit": "/hpf"},
+            {"test_name": "Calcium oxalate monohydrate crystals", "value": 0}, {"test_name": "Calcium oxalate dihydrate crystals", "value": 0},
+        ])
+        self.assertEqual(len(report.results), 7)
+        ldl = report.results[0]
+        self.assertEqual((ldl.previous_value, ldl.reference_range, ldl.reference_high, ldl.method), (170.0, "<= 99.9", 99.9, "Calculated"))
+        self.assertEqual(report.results[1].method, "NADH")
+
+    def test_a_flag_the_printed_range_contradicts_is_cleared(self):
+        report = self.report(results=[
+            {**self.RESULT, "flag": "Normal"},
+            {"test_name": "LDL : HDL Cholesterol", "value": 3.19, "reference_range": "0 - 3.5", "flag": "high"},
+            {"test_name": "Urea", "value": 48.66, "reference_range": "19.0 - 44.0", "flag": "H"},
+            {"test_name": "Odd", "value": 1, "flag": "low"},
+        ])
+        self.assertEqual([result.flag for result in report.results], [None, None, "high", "low"])
+
+    def test_units_text_and_bounds_read_cleanly(self):
+        report = self.report(results=[
+            {"test_name": "Cholesterol - LDL", "value": 153, "value_text": "mg/dl", "unit": "mg/dl", "reference_range": "<= 99.9"},
+            {"test_name": "Estradiol (E2)", "value": 24, "value_text": "< 24", "unit": "pg/mL", "reference_range": "11-44"},
+            {"test_name": "Iron Serum", "value": 145, "unit": "Âµg/dL"},
+            {"test_name": "Urine Routine", "value_text": "Automated"},
+            {"test_name": "Glucose", "panel": "", "value_text": "Negative", "reference_range": "Negative"},
+            {"test_name": "Red blood cell", "value": 0, "unit": "/hpf"},
+            {"test_name": "Thyroid Stimulating Hormone - Ultra Sensitive", "value": 1.226, "unit": "µIU/mL"},
+            {"test_name": "Thyroid Stimulating Hormone -", "panel": "Infertility panel for men", "value": 1.226, "unit": "µIU/mL"},
+        ])
+        ldl, estradiol, iron, glucose, cells, tsh = report.results
+        self.assertIsNone(ldl.value_text)
+        self.assertEqual((estradiol.value, estradiol.value_text), (None, "< 24"))
+        self.assertEqual(iron.unit, "µg/dL")
+        self.assertEqual((glucose.panel, cells.panel), ("Urine Routine & Microscopy", "Urine Routine & Microscopy"))
+        self.assertEqual(tsh.panel, "Thyroid Profile")
+
+    def test_a_merged_copy_does_not_bring_back_a_contradicted_flag(self):
+        summary = {"test_name": "Cholesterol - Total", "value": 212, "reference_range": "<= 199.9"}
+        detail = {"test_name": "Cholesterol - Total", "value": 212, "reference_range": "Desirable: < 200", "flag": "normal"}
+        self.assertIsNone(self.report(results=[summary, detail]).results[0].flag)
+
+    def test_report_rules(self):
+        flags = self.report(report_date="2026-04-01").review_flags()
+        self.assertTrue(any("before the sample collection" in flag for flag in flags))
+        self.assertIn("No test results were found.", HealthReport().review_flags())
+
+    def test_lab_reports_are_not_medical_records(self):
+        self.assertIn("health_report", DOCUMENT_TYPES["medical_record"].description)
 
 
 class DoclingFallbackTests(unittest.TestCase):

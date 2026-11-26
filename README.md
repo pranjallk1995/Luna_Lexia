@@ -148,13 +148,14 @@ reliable than asking a 7B model to reformat them.
 | `bank_account_proof` | Cancelled cheques, cheque books, passbook front pages, bank letters | Bank, holder, account (last 4), type, IFSC, MICR, branch | Valid IFSC |
 | `provident_fund_document` | UAN card, PF Form 11 and Form 2, EPS and gratuity forms, PF passbook | Kind, member, UAN, PF account, establishment, joining date, nominees and shares, balances | Nominee shares total 100%; passbooks show a balance |
 | `legal_document` | Legal notices, NDAs, contracts, affidavits, powers of attorney, court orders | Kind, parties, advocate, date, reference, subject, demands, deadline, amount claimed, effective dates | — |
-| `medical_record` | Medical and fitness reports, prescriptions, lab reports, discharge summaries, bills | Kind, patient, provider, doctor, date, purpose, findings, fitness, amount paid | — |
+| `health_report` | Lab test reports: blood tests, full-body check-ups, lipid, thyroid, liver, kidney, vitamin, hormone, and urine panels | Lab, patient, age, gender, patient ID, package, samples, collection and report dates, status, every result (panel, test, value or text, unit, printed range and its limits, printed flag, method, an earlier value it prints), pending tests | Up to 250 results, read in batches; a test printed in the doctor summary and again on its page is one row; results present; report after collection; a printed flag agrees with its range; a range's lower limit below its upper |
+| `medical_record` | Medical and fitness certificates, prescriptions, discharge summaries, bills | Kind, patient, provider, doctor, date, purpose, findings, fitness, amount paid | — |
 | `other` | Anything else, such as onboarding and verification forms and cover letters | Issuer, recipient, date, reference, key amounts and dates | — |
 
 Every type also gets generic checks: `*_from` dates before `*_to` dates, PAN,
 TAN, GSTIN, and IFSC formats, and the type's key amount being present (for
 types where every such document has one). Identity, education, career, legal,
-medical, vehicle, PF, and bank-proof documents are not given a financial year
+medical, health report, vehicle, PF, and bank-proof documents are not given a financial year
 from their dates, so a 2017 marksheet is not tagged `fy 2017-18`. The
 full JSON schema of each type is available from `list_document_types` and
 `GET /api/document-types`. Schemas live in `mcp/app/core/schemas.py`; bump
@@ -191,6 +192,24 @@ Treat documents with `review_flags` as unconfirmed, and read `null` fields as
 "not printed", not zero. Store the immutable `document_id` (or `public_url`)
 rather than the filename when linking a Fiora record to its supporting document.
 
+## Luna Vita integration
+
+Luna Vita's **Health reports** page and its `get_health_reports` and `get_lab_test_trend`
+tools show the person's lab reports: each result against the range its report prints, how
+it moved since the last report, and the PDF itself. Upload a lab report here (or import it
+from Gmail or Drive); it is read as a `health_report`, and Vita shows it at once. Nothing is
+copied into Vita: it reads Lexia over the shared network with `LUNALEXIA_API_TOKEN`, like
+Fiora, and only these two routes:
+
+| Route | Purpose |
+| --- | --- |
+| `GET /api/metadata?doc_type=health_report` | The person's visible health reports with their `extracted` results and `review_flags` |
+| `GET /api/public/documents/{document_id}` | A report's PDF, which Vita's backend passes to its own page |
+
+Set the same `LUNALEXIA_API_TOKEN` in `Luna_Vita/.env` as here. Upgrading from 2.2 or earlier: lab
+reports stored before 2.3.0 are `medical_record`s; re-extract each with `doc_type`
+`health_report` (or run `start_reanalysis`, since `SCHEMA_VERSION` is now 3) so Vita sees them.
+
 ## Luna ecosystem
 
 ![Luna ecosystem architecture](docs/luna-ecosystem.svg)
@@ -219,7 +238,8 @@ the GPU and keeps Socia's chat model resident, to its Ollama. Socia's pictures c
 Sentia's image service (Qwen-Image 2.1 with diffusers), which takes turns with Ollama on the GPU. Visia's SigLIP 2, Vibia's CLAP
 and Lexia's Docling run inside those apps instead, each in a process that exits when idle.
 Orange lines are Visia image URLs that other apps use: food images for Vita, room images
-for Lumia, and cover art for Vibia. Grey dashed lines are planned: links into Fiora (tax
+for Lumia, and cover art for Vibia. The rose line is lab reports: Vita reads the health reports Lexia stores,
+with their results and PDFs, for its Health reports page. Grey dashed lines are planned: links into Fiora (tax
 details from Lexia, transaction image and icon URLs from Visia). Luna Unia is the one home
 for the other apps, on port 42069: it checks which Luna stacks are running and opens each
 one with the shared sign-in. The purple line is the mood and beats of the track Vibia

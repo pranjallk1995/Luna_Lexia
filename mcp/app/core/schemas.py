@@ -272,6 +272,10 @@ class ExtractedDetails(BaseModel):
     # The list field holding a statement's table rows (transactions, trades); long
     # tables fill it in batches, since one reply cannot hold every row.
     ROWS_FIELD: ClassVar[str | None] = None
+    # Whether a row named "total" is data (a lab's "Protein, Total") rather than a sum to skip.
+    TOTALS_ARE_ROWS: ClassVar[bool] = False
+    # A table header that marks the tables holding the rows; None = any table with enough numeric rows.
+    RESULT_TABLE: ClassVar[re.Pattern[str] | None] = None
 
     def reference_date(self) -> date | None:
         return next(
@@ -1317,6 +1321,236 @@ class MedicalRecord(ExtractedDetails):
     amount_paid: Money = Field(None, description="Bills only; preventive check-ups count for 80D")
 
 
+def test_key(name: str | None) -> str:
+    """A test name without case, spacing, punctuation, or a plural "s": "Red Blood Cells" is "red blood cell"."""
+    return re.sub(r"[^0-9a-z]+", "", (name or "").casefold()).removesuffix("s")
+
+
+# A lab result printed as a number, possibly with its unit after it ("14 g/dL", "4.00").
+PRINTED_NUMBER = re.compile(r"^\s*([-+]?(?:\d{1,3}(?:,\d{2,3})+|\d+)(?:\.\d+)?)(?:\s*[^\d\s<>=≤≥:].*|\s+\d+\^.*)?$")
+# A date in a result column: the summary's "18 Apr 26" beside a section name.
+PRINTED_DATE = re.compile(r"^\s*\d{1,2}[\s/.-]+[A-Za-z]{3,9}[\s/.-]+\d{2,4}\s*$")
+# Reference intervals printed plainly, without categories such as "Desirable:".
+UPPER_LIMIT = re.compile(r"^\s*(?:<=|≤|=<|<|up\s*to|below)\s*(\d+(?:\.\d+)?)\s*[^\d:]*$", re.IGNORECASE)
+LOWER_LIMIT = re.compile(r"^\s*(?:>=|≥|=>|>|above)\s*(\d+(?:\.\d+)?)\s*[^\d:]*$", re.IGNORECASE)
+TRAILING_LIMIT = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(or\s+below|or\s+less|or\s+above|or\s+more)\s*$", re.IGNORECASE)
+INTERVAL = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(?:-|–|—|to)\s*(\d+(?:\.\d+)?)\s*[^\d:]*$", re.IGNORECASE)
+# Acronyms that name one test however a lab spells it out: "SGOT (Aspartate Aminotransferase)".
+ACRONYM = re.compile(r"\b[A-Z][A-Z0-9]{2,}\b")
+# The panel a test belongs to: by the section it is printed under, else by its own name.
+PANELS = (
+    ("Urine Routine & Microscopy", r"urine|urinalysis", r"colou?r|appearance|specific gravity|\bph\b|ketone|urobilinogen|leucocyte esterase|nitrite|ascorbic|pus cell|epithelial|yeast|bacteria|\bcasts?\b|crystals?|amorphous"),
+    ("Diabetes Profile", r"diabet|sugar|glucose|hba1c", r"hba1c|glycosylated|glycated|glucose|\beag\b"),
+    ("Complete Blood Count", r"blood count|\bcbc\b|ha?emogram", r"ha?emoglobin\b|\brbc\b|\bhct\b|ha?ematocrit|\bmcvs?\b|\bmch\b|\bmchc\b|\brdw|leu[ck]ocyte count|neutrophil|lymphocyte|monocyte|eosinophil|basophil|platelet|\bmpv\b|\bpdw\b"),
+    ("Inflammatory markers", r"inflamma", r"sedimentation|\besr\b|c-reactive|\bcrp\b"),
+    ("Lipid Profile", r"lipid", r"cholesterol|triglyceride|\bhdl\b|\bldl\b|\bvldl\b|apolipoprotein|lp\(a\)"),
+    ("Liver Function", r"liver|hepatic|\blft\b", r"bilirubin|protein|albumin|globulin|a/g ratio|sgot|sgpt|\bast\b|\balt\b|transaminase|aminotransferase|alkaline phosphatase|\bggt\b|glutamyl"),
+    ("Kidney Function", r"kidney|renal|\bkft\b|\brft\b", r"\burea\b|\bbun\b|creatinine|uric acid|sodium|potassium|chloride|\begfr\b"),
+    ("Iron Studies", r"\biron\b", r"\biron\b|\btibc\b|\buibc\b|transferrin|ferritin"),
+    ("Thyroid Profile", r"thyroid", r"thyroid|\btsh\b|\bt3\b|\bt4\b"),
+    ("Vitamins & Minerals", r"vitamin|mineral|bone", r"vitamin|\bb12\b|folate|folic|calcium|magnesium|phosphorus"),
+    ("Hormones", r"hormone|reproductive|fertility", r"follicle|\bfsh\b|luteini|\blh\b|prolactin|testosterone|estradiol|oestradiol|\bshbg\b|progesterone|cortisol"),
+)
+
+
+# Tests a urine dipstick reports in words.
+DIPSTICK = re.compile(r"glucose|protein|bilirubin|blood|ketone|urobilinogen|nitrite|leu[ck]ocyte", re.IGNORECASE)
+# A result that only bounds the value: "< 24", "> 1000".
+BOUNDED = re.compile(r"^\s*(<=|>=|<|>|≤|≥)")
+LAB_FLAGS = {"h": "high", "hi": "high", "l": "low", "lo": "low", "a": "abnormal", "*": "abnormal", "n": "normal"}
+
+
+def parse_flag(value: Any) -> str | None:
+    """Read a lab's printed flag: H, L, High, Low, Abnormal, or Normal."""
+    text = re.sub(r"[\s.()]+", "", str(value or "")).casefold()
+    return LAB_FLAGS.get(text) or pick_choice(("low", "high", "normal", "abnormal"), text or None)
+
+
+def lab_panel(
+    panel: str | None, test_name: str | None, package: str | None = None, unit: str | None = None, text_result: bool = False
+) -> str | None:
+    """One name per panel across labs and reports, so results group and trend the same way.
+
+    A count per microscope field (/hpf), or a dipstick's text result for glucose or
+    protein, is urine; otherwise the test's own name decides, then the section it is
+    printed under (an "infertility panel" may hold a thyroid test).
+    """
+    printed = (panel or "").strip()
+    if printed and (test_key(printed) == test_key(test_name) or (package and test_key(printed) in test_key(package))):
+        printed = ""  # The model named the test, or the whole package, as its panel.
+    if re.search(r"/\s*[hl]pf\b", unit or "", re.IGNORECASE) or (text_result and DIPSTICK.search(test_name or "")):
+        return PANELS[0][0]
+    for canonical, _, by_name in PANELS:
+        if re.search(by_name, test_name or "", re.IGNORECASE):
+            return canonical
+    for canonical, by_panel, _ in PANELS:
+        if printed and re.search(by_panel, printed, re.IGNORECASE):
+            return canonical
+    return printed or None
+
+
+def printed_limits(text: str | None) -> tuple[float | None, float | None] | None:
+    """The limits of a plainly printed interval ("13.0 - 17.0", "<= 199.9", "99 or below"); None otherwise."""
+    if not text:
+        return None
+    if match := INTERVAL.match(text):
+        return float(match[1]), float(match[2])
+    if match := UPPER_LIMIT.match(text):
+        return None, float(match[1])
+    if match := LOWER_LIMIT.match(text):
+        return float(match[1]), None
+    if match := TRAILING_LIMIT.match(text):
+        return (None, float(match[1])) if match[2].lower().endswith(("below", "less")) else (float(match[1]), None)
+    return None
+
+
+class LabResult(Item):
+    """One test on a lab report; the report's doctor summary and its detailed pages repeat many."""
+
+    panel: Text = Field(
+        None,
+        description="Section heading row the test is printed under, e.g. Lipid Profile, Kidney Function Test; "
+        "not the package name",
+    )
+    test_name: Text = Field(None, description="Test or parameter name as printed, e.g. Cholesterol - LDL")
+    value: Number = Field(
+        None, description="Numeric result as printed, e.g. 153 or 4.00; null when not a number or printed with < or >"
+    )
+    value_text: Text = Field(
+        None, description="The result when it is not a plain number, e.g. Negative, Yellow, Clear, or < 24 with its sign"
+    )
+    unit: Text = Field(None, description="Unit as printed, e.g. mg/dL, %, 10^3/µL, Ratio")
+    reference_range: Text = Field(
+        None, description="Bio. Ref. Interval as printed, e.g. 13.0 - 17.0, <= 199.9, Negative, Desirable: < 200"
+    )
+    reference_low: Number = Field(None, description="Lower limit of the reference interval, only if printed")
+    reference_high: Number = Field(None, description="Upper limit of the reference interval, only if printed")
+    flag: Annotated[Literal["low", "high", "normal", "abnormal"] | None, BeforeValidator(parse_flag)] = Field(
+        None, description="Only a flag the report prints beside the result (L, H, Low, High, Abnormal); else null"
+    )
+    method: Text = Field(None, description="Test method, e.g. Enzymatic, CMIA, Calculated")
+    previous_value: Number = Field(None, description="An earlier result printed beside this one, e.g. a trends column")
+    previous_date: Day = Field(None, description="Date of that earlier result")
+
+    def out_of_range(self) -> bool | None:
+        """Whether the value lies outside its printed numeric interval; None when either is missing."""
+        if self.value is None or (self.reference_low is None and self.reference_high is None):
+            return None
+        return (self.reference_low is not None and self.value < self.reference_low) or (
+            self.reference_high is not None and self.value > self.reference_high
+        )
+
+
+class HealthReport(ExtractedDetails):
+    """A diagnostic lab's test report, such as a full-body check-up with its blood and urine panels.
+
+    Luna Vita reads these to show each result against its reference range and its
+    trend across reports. The same test is often printed twice, in a doctor summary
+    and on its detailed page; the duplicates are merged into one row.
+    """
+
+    ROWS_FIELD = "results"
+    TOTALS_ARE_ROWS = True
+    RESULT_TABLE = re.compile(r"\b(test|investigation|parameter)s?\b.*\b(result|value|observed)", re.IGNORECASE)
+    ISSUER_FIELD = "lab_name"
+    DATE_FIELDS = ("collection_date", "report_date")
+    TRACKS_FINANCIAL_YEAR = False
+
+    lab_name: Text = Field(None, description="Diagnostic lab or provider, e.g. Tata 1mg Labs, Thyrocare")
+    patient_name: Text = None
+    patient_age: Text = Field(None, description="Age as printed, e.g. 31 Yrs or 31Y 3M 17D")
+    patient_gender: Choice("male", "female", "other") = None
+    patient_id: Text = Field(None, description="Patient, lab visit, or sample ID")
+    referred_by: Text = Field(None, description="Referring doctor, if printed")
+    package_name: Text = Field(None, description="Test package or panels ordered, e.g. Comprehensive Full Body Checkup")
+    sample_types: Text = Field(None, description="Samples taken, e.g. Whole blood EDTA, Serum, Urine")
+    collection_date: Day = Field(None, description="Sample collection date")
+    report_date: Day = Field(None, description="Date the report was issued")
+    report_status: Choice("final", "partial", "provisional") = None
+    results: list[LabResult] = Field(
+        default_factory=list,
+        max_length=250,
+        description="Every test with its result, one entry per test; not section headings, and not "
+        "interpretation or guideline tables (risk groups, diagnosis criteria)",
+    )
+    pending_tests: list[str] = Field(
+        default_factory=list, max_length=30, description="Tests the report lists as pending or to follow"
+    )
+
+    @model_validator(mode="after")
+    def clean_results(self) -> "HealthReport":
+        """Make each result read as printed, then keep one row per test.
+
+        A number printed in the result text wins over the model's (which may be
+        rescaled); a plain printed interval sets the limits; a flag the printed
+        interval contradicts is the model's, not the lab's, and is cleared; section
+        and date rows are dropped; and the doctor summary's copy of a test merges
+        into its detailed row, matched by name or by an acronym both spell (SGOT).
+        """
+        cleaned = []
+        for result in self.results:
+            if not result.test_name:
+                continue
+            dated = bool(result.value_text) and bool(PRINTED_DATE.match(result.value_text) or parse_date(result.value_text))
+            if dated or (result.value is None and not result.value_text):
+                continue  # A section heading, or the date column of a summary.
+            if result.unit:
+                result.unit = result.unit.replace("Âµ", "µ").replace("Â", "")
+            if result.value_text and (number := PRINTED_NUMBER.match(result.value_text)):
+                result.value, result.value_text = float(number[1].replace(",", "")), None
+            elif result.value_text and BOUNDED.match(result.value_text):
+                result.value = None  # "< 24" is not 24.
+            elif result.value is not None:
+                result.value_text = None  # Beside a number, the text is only its unit or a label.
+            if result.value is None and not result.reference_range and not result.unit:
+                continue  # A section row with a note, such as "Urine Routine: Automated".
+            if limits := printed_limits(result.reference_range):
+                result.reference_low, result.reference_high = limits
+            elif None not in (result.reference_low, result.reference_high) and result.reference_low > result.reference_high:
+                result.reference_low = result.reference_high = None  # Read from a table of categories.
+            result.panel = lab_panel(result.panel, result.test_name, self.package_name, result.unit, result.value is None)
+            cleaned.append(result)
+        merged: list[LabResult] = []
+        for result in cleaned:
+            twin = next((kept for kept in merged if self.same_test(kept, result)), None)
+            if twin is None:
+                merged.append(result)
+                continue
+            ranged = twin.reference_range is not None or twin.reference_low is not None or twin.reference_high is not None
+            for name in LabResult.model_fields:
+                if ranged and name in ("reference_low", "reference_high"):
+                    continue  # The interval stays the one printed with the row kept.
+                if getattr(twin, name) is None and getattr(result, name) is not None:
+                    setattr(twin, name, getattr(result, name))
+        for result in merged:
+            outside = result.out_of_range()
+            if outside is not None and result.flag in ("low", "high", "normal") and (result.flag == "normal") == outside:
+                result.flag = None  # The printed interval contradicts it: the model's flag, not the lab's.
+        self.results = merged
+        return self
+
+    @staticmethod
+    def same_test(first: LabResult, second: LabResult) -> bool:
+        if first.value != second.value or (first.value is None and test_key(first.value_text) != test_key(second.value_text)):
+            return False
+        first_key, second_key = test_key(first.test_name), test_key(second.test_name)
+        if first_key == second_key:
+            return True
+        shorter, longer = sorted((first_key, second_key), key=len)
+        if len(shorter) >= 8 and longer.startswith(shorter) and test_key(first.unit) == test_key(second.unit):
+            return True  # One copy's name was cut short: "Thyroid Stimulating Hormone -".
+        shared = set(ACRONYM.findall(first.test_name or "")) & set(ACRONYM.findall(second.test_name or ""))
+        return bool(shared) and test_key(first.unit) == test_key(second.unit)
+
+    def rules(self) -> list[str]:
+        flags = []
+        if not self.results:
+            flags.append("No test results were found.")
+        if self.collection_date and self.report_date and self.report_date < self.collection_date:
+            flags.append(f"The report date ({self.report_date}) is before the sample collection ({self.collection_date}).")
+        return flags
+
+
 @dataclass(frozen=True)
 class DocumentType:
     """One recognizable kind of document and the schema its details follow."""
@@ -1511,10 +1745,20 @@ DOCUMENT_TYPES: dict[str, DocumentType] = {
             LegalDocument,
         ),
         DocumentType(
+            "health_report",
+            "Health report",
+            "health report",
+            "Diagnostic lab test report listing test results with units and reference ranges: "
+            "blood tests, full-body check-ups, lipid, thyroid, liver, kidney, vitamin, hormone, "
+            "or urine panels.",
+            HealthReport,
+        ),
+        DocumentType(
             "medical_record",
             "Medical record",
             "medical",
-            "Medical or fitness report, prescription, lab report, discharge summary, or hospital bill.",
+            "Medical or fitness certificate, prescription, discharge summary, or hospital bill; "
+            "a lab report of test results is a health_report.",
             MedicalRecord,
         ),
         DocumentType(
@@ -1530,7 +1774,7 @@ DOCUMENT_TYPES: dict[str, DocumentType] = {
 DocTypeName = Literal[tuple(DOCUMENT_TYPES)]  # type: ignore[valid-type]
 
 # Bump when a schema changes so start_reanalysis re-extracts documents stored under an older one.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def document_type(key: str) -> DocumentType:

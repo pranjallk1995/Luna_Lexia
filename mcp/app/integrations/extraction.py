@@ -127,6 +127,11 @@ class DocumentAnalyzer:
         "printed in that row, not a per-unit figure. Write amounts as plain numbers without "
         "currency symbols or thousands separators. {guard}"
     )
+    # For types whose rows may be named "total" (a lab's "Protein, Total"): no row is a sum.
+    TOTALS_ARE_ROWS = (
+        " Here a row whose name says total, gross, or net, such as Protein, Total or "
+        "Total Leucocyte Count, is a row of its own: copy it."
+    )
     IDENTIFIER_RETRY = (
         "{problems} Copy each identifier exactly as printed under its own label, or use null "
         "if the document does not print one."
@@ -194,7 +199,8 @@ class DocumentAnalyzer:
             self.row_extractors[key] = Agent(
                 model,
                 output_type=NativeOutput(rows),
-                instructions=self.ROWS_INSTRUCTIONS.format(label=kind.label, guard=self.GUARD),
+                instructions=self.ROWS_INSTRUCTIONS.format(label=kind.label, guard=self.GUARD)
+                + (self.TOTALS_ARE_ROWS if kind.schema.TOTALS_ARE_ROWS else ""),
                 retries=retries,
             )
 
@@ -262,9 +268,11 @@ class DocumentAnalyzer:
     ) -> ExtractedDetails:
         """Fill ``kind``'s schema; raise ``ValueError`` when retries cannot fix the reply."""
         if kind.key in self.row_extractors and content.has_text and not from_images:
-            outline, rows = self.table_rows(content)
-            layer_rows = self.text_layer_rows(self.reader.text_layer(data))
-            if len(layer_rows) > len(rows):
+            totals = kind.schema.TOTALS_ARE_ROWS
+            outline, rows = self.table_rows(content, totals, kind.schema.RESULT_TABLE)
+            layer_rows = self.text_layer_rows(self.reader.text_layer(data), totals)
+            # A lab report's text layer also prints its guideline tables; its result tables are enough.
+            if len(layer_rows) > len(rows) and not (kind.schema.RESULT_TABLE and rows):
                 rows = layer_rows
             if len(rows) > AppConfig.EXTRACTION_ROWS_PER_CALL:
                 return self.extract_in_batches(data, content, kind, outline, rows)
@@ -275,12 +283,18 @@ class DocumentAnalyzer:
             raise ValueError(f"{kind.label} details could not be extracted: {error}") from error
 
     @classmethod
-    def table_rows(cls, content: DocumentContent) -> tuple[str, list[tuple[str | None, str]]]:
+    def table_rows(
+        cls, content: DocumentContent, totals_are_rows: bool = False, result_table: re.Pattern[str] | None = None
+    ) -> tuple[str, list[tuple[str | None, str]]]:
         """Split the Markdown into its table data rows and the text around them.
 
         Returns the text without the data rows (table headers and total rows stay,
         and a note marks where rows were left out), and each data row with its
-        table's header line.
+        table's header line. With ``totals_are_rows`` a line naming a total is a row too.
+        With ``result_table`` (a lab report's "Test Name | Result" header), only tables
+        whose header matches give rows, however short, and every line of them is a row,
+        with or without digits ("Negative", or a section name); other tables, such as
+        guideline tables, stay in the text.
         """
         outline: list[str] = []
         rows: list[tuple[str | None, str]] = []
@@ -290,7 +304,11 @@ class DocumentAnalyzer:
             header, table = None, []
 
             def close_table() -> None:
-                if len(table) >= cls.MIN_TABLE_ROWS:
+                if result_table is not None:
+                    keep = bool(table) and header is not None and bool(result_table.search(header))
+                else:
+                    keep = len(table) >= cls.MIN_TABLE_ROWS
+                if keep:
                     rows.extend((header, row) for row in table)
                     outline.append(f"[{len(table)} table rows read separately]")
                 else:
@@ -301,9 +319,17 @@ class DocumentAnalyzer:
                 if not line.startswith("|"):
                     close_table()
                     header = None
+                elif result_table is not None and header is not None and not line.startswith("|---"):
+                    if line.strip("| ").strip():
+                        table.append(line)
+                        continue
                 elif header is None and index + 1 < len(lines) and lines[index + 1].startswith("|---"):
                     header = line
-                elif not line.startswith("|---") and any(c.isdigit() for c in line) and not SUMMARY_ROW.search(line):
+                elif (
+                    not line.startswith("|---")
+                    and any(c.isdigit() for c in line)
+                    and (totals_are_rows or not SUMMARY_ROW.search(line))
+                ):
                     table.append(line)
                     continue
                 outline.append(line)
@@ -311,13 +337,13 @@ class DocumentAnalyzer:
         return "\n".join(outline), rows
 
     @classmethod
-    def text_layer_rows(cls, pages: list[str]) -> list[tuple[str | None, str]]:
+    def text_layer_rows(cls, pages: list[str], totals_are_rows: bool = False) -> list[tuple[str | None, str]]:
         """Lines of the PDF text layer that read as table rows, each with the line above its block."""
         rows: list[tuple[str | None, str]] = []
         header = None
         for line in "\n".join(pages).splitlines():
             line = line.strip()
-            if len(cls.NUMBER.findall(line)) >= cls.ROW_NUMBERS and not SUMMARY_ROW.search(line):
+            if len(cls.NUMBER.findall(line)) >= cls.ROW_NUMBERS and (totals_are_rows or not SUMMARY_ROW.search(line)):
                 rows.append((header, line))
             elif line:
                 header = line
