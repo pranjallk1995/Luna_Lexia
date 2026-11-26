@@ -264,7 +264,12 @@ class LexiaHTTPRoutes:
             return await anyio.to_thread.run_sync(visible.update_metadata_many, changes)
 
         self.route("GET", "/api/metadata", metadata)
+        async def lab_tests(request: Request):
+            return await anyio.to_thread.run_sync(self.service.lab_tests.explanations)
+
         self.route("GET", "/api/document-types", document_types)
+        if self.service.lab_tests is not None:
+            self.route("GET", "/api/lab-tests", lab_tests)
         self.route("GET", "/api/documents/{name}", details)
         self.route("GET", "/api/documents/{name}/text", text)
         self.route("GET", "/api/public/documents/{name}", public_document, protected=False)

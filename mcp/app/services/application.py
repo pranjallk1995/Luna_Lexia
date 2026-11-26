@@ -172,6 +172,8 @@ class DocumentIndexer:
         self.analyzer = pipeline.analyzer
         self.reader = pipeline.analyzer.reader
         self.urls = urls
+        # Set by the composition root: explains a stored health report's new tests (services/lab_tests.py).
+        self.lab_tests: Any = None
 
     def analyze(self, data: bytes, doc_type: str | None = None) -> tuple[DocumentAnalysis, DocumentContent]:
         """Analyze bytes; return the analysis and the pages it was read from."""
@@ -201,7 +203,10 @@ class DocumentIndexer:
             analysis_model=self.analyzer.model,
             schema_version=SCHEMA_VERSION,
         )
-        return self.documents.upsert(record, self.urls.repository.get())
+        stored = self.documents.upsert(record, self.urls.repository.get())
+        if self.lab_tests is not None and analysis.doc_type == "health_report":
+            self.lab_tests.explain_in_background((analysis.extracted or {}).get("results") or [])
+        return stored
 
     def is_current(self, existing: Row | None, digest: str) -> bool:
         """Whether a record was made from these bytes by the current model and schema."""
@@ -989,6 +994,8 @@ class LexiaService:
         self.showcase: Any = None
         # Set by the composition root: the person's saved passwords of locked PDFs (services/passwords.py).
         self.passwords: Any = None
+        # Set by the composition root: what each lab test measures (services/lab_tests.py).
+        self.lab_tests: Any = None
         # Background re-analysis of stored documents, e.g. after a model change.
         self.reanalysis = tenancy.PerUser(lambda: Reanalysis(indexer))
 

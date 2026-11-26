@@ -440,6 +440,41 @@ class PasswordRepository(Repository):
             )
 
 
+class LabTestRepository(Repository):
+    """What each lab test measures, one row per test key."""
+
+    COLUMNS = "test_key, test_name, about, source, updated_at"
+
+    def all(self) -> list[Row]:
+        return self.fetch_all(f"SELECT {self.COLUMNS} FROM lab_tests ORDER BY test_name")
+
+    def known(self, keys: list[str]) -> set[str]:
+        if not keys:
+            return set()
+        rows = self.fetch_all("SELECT test_key FROM lab_tests WHERE test_key = ANY(%s)", (keys,))
+        return {row["test_key"] for row in rows}
+
+    def save(self, rows: list[tuple[str, str, str]], source: str) -> int:
+        """Store (key, name, about) rows; the model's never replace an existing one, an assistant's replace any."""
+        if not rows:
+            return 0
+        conflict = (
+            "DO NOTHING"
+            if source == "model"
+            else "DO UPDATE SET test_name = EXCLUDED.test_name, about = EXCLUDED.about, "
+            "source = EXCLUDED.source, updated_at = now()"
+        )
+        with self.database.connect() as connection:
+            saved = 0
+            for key, name, about in rows:
+                saved += connection.execute(
+                    f"""INSERT INTO lab_tests (test_key, test_name, about, source) VALUES (%s, %s, %s, %s)
+                        ON CONFLICT (test_key) {conflict}""",
+                    (key, name, about, source),
+                ).rowcount
+            return saved
+
+
 class ImportRepository(Repository):
     """The Drive and Gmail connections, import jobs, and the outcome of every imported file."""
 

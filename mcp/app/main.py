@@ -11,19 +11,21 @@ from app.data.repositories import (
     ChunkRepository,
     DocumentRepository,
     ImportRepository,
+    LabTestRepository,
     PasswordRepository,
     PublicURLRepository,
 )
 from app.integrations.drive import DriveOAuth
 from app.integrations.gmail import GmailOAuth
 from app.integrations.embeddings import OllamaEmbedder
-from app.integrations.extraction import DocumentAnalyzer, PasswordFinder
+from app.integrations.extraction import DocumentAnalyzer, LabTestExplainer, PasswordFinder
 from app.integrations.ollama import OllamaChat
 from app.integrations.parsing import IdleDoclingParser
 from app.integrations.remote import DocumentSourceResolver
 from app.services.application import LexiaService
 from app.services.documents import DocumentReader
 from app.services.imports import FileImporter, ImportJobs, ImportService
+from app.services.lab_tests import LabTestService
 from app.services.passwords import SavedPasswords
 from app.services.semantic import Chunker, SemanticIndex
 from app.services.showcase import ShowcaseSorter
@@ -64,6 +66,13 @@ class LunaLexiaApplication:
         # Saved passwords of locked PDFs, tried on every locked PDF uploaded or imported.
         self.service.passwords = SavedPasswords(PasswordRepository(self.database), config.token_encryption_key)
         self.service.visible.decoder.keyring = self.service.passwords
+        # What each lab test measures; the model explains a stored health report's new tests.
+        self.service.lab_tests = LabTestService(
+            LabTestRepository(self.database),
+            self.service.visible.documents,
+            LabTestExplainer(OllamaChat(config.ollama_url, config.document_model, config.context_tokens)),
+        )
+        self.service.indexer.lab_tests = self.service.lab_tests
         imports = ImportRepository(self.database)
         password_finder = PasswordFinder(OllamaChat(config.ollama_url, config.document_model, config.context_tokens))
         jobs = ImportJobs(imports, FileImporter(self.service.visible, sources, imports, password_finder))
@@ -78,6 +87,8 @@ class LunaLexiaApplication:
         for user_id in self.database.tenants.users():
             with tenancy.acting_as(user_id):
                 jobs.resume_unfinished()
+                # Reports stored before explanations existed, or whose explaining was cut short by a restart.
+                self.service.lab_tests.explain_stored_in_background()
         self.service.semantic = SemanticIndex(
             ChunkRepository(self.database),
             OllamaEmbedder(config.ollama_url, config.embedding_model, config.embedding_dimensions),

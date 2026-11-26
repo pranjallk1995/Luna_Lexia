@@ -136,6 +136,17 @@ ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS current_started_at timestamptz;
 -- LangGraph's checkpoint tables, from when imports ran as a checkpointed graph.
 DROP TABLE IF EXISTS checkpoint_writes, checkpoint_blobs, checkpoints, checkpoint_migrations;
 
+-- What each lab test measures, in a sentence or two, shown beside its results in Luna Vita.
+-- One per test (keyed as health reports match tests across labs), written by the local model
+-- when a report first has the test, or by an assistant through MCP, which the model never overwrites.
+CREATE TABLE IF NOT EXISTS lab_tests (
+    test_key text PRIMARY KEY,
+    test_name text NOT NULL,
+    about text NOT NULL,
+    source text NOT NULL CHECK (source IN ('model', 'assistant')),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS vault_config (
     singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
     public_base_url text NOT NULL,

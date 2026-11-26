@@ -189,6 +189,8 @@ class LexiaMCPTools:
         if service.semantic is not None:
             self._register_semantic_tools()
         self._register_reanalysis_tools()
+        if service.lab_tests is not None:
+            self._register_lab_test_tools()
 
     @staticmethod
     def content(result: PreviewResult) -> list:
@@ -504,6 +506,37 @@ class LexiaMCPTools:
             """Stop the running re-analysis after the document in progress."""
             return reanalysis.stop()
 
+    def _register_lab_test_tools(self) -> None:
+        server, lab_tests = self.server, self.service.lab_tests
+
+        @server.tool()
+        async def list_lab_tests(missing_only: bool = False) -> dict[str, Any]:
+            """List every test in the user's health reports with what it measures.
+
+            Each test has its panel, how many reports have it, about (its short
+            explanation, shown in Luna Vita when the person opens the test), and
+            source: "model" when Luna Sentia's local model wrote it on upload,
+            "assistant" when an assistant did, or null when none exists yet.
+            missing_only lists only the tests without one. Use this after a health
+            report is uploaded, then write explanations with explain_lab_tests.
+            """
+            return await offload(lab_tests.listing, missing_only)
+
+        @server.tool()
+        async def explain_lab_tests(explanations: list[dict[str, str]]) -> dict[str, Any]:
+            """Save what lab tests measure, shown in Luna Vita when the person opens a test.
+
+            explanations is a list of {"test_name": ..., "about": ...}, up to 200,
+            with test_name as list_lab_tests gives it. Write about in plain English,
+            one or two short sentences (under 400 characters): what the test measures
+            and why it is checked, expanding abbreviations. Give no reference ranges,
+            advice, or reading of the person's own results. A saved explanation
+            replaces the local model's (source "model") or an earlier one, and the
+            local model never overwrites it. Write them for the tests without one,
+            and replace a model's explanation that is wrong, vague, or unclear.
+            """
+            return await offload(lab_tests.save, explanations)
+
     def _register_import_tools(self) -> None:
         server, imports = self.server, self.service.imports
 
@@ -688,6 +721,9 @@ class LexiaMCPTools:
             extension is corrected to match the format, a taken name gets a
             numeric suffix, and an exact duplicate returns status "duplicate".
             Maximum size: 50 MiB. Analysis can take a minute.
+            For a health_report, then call list_lab_tests and write a plain explanation
+            of each test with explain_lab_tests: Luna Vita shows it when the person
+            opens that test.
             """
             return await offload(upload, name, content_base64, document_url, file, password, doc_type)
 
