@@ -27,6 +27,7 @@ from app.core.schemas import (
     RentReceipt,
     Resume,
     financial_year_for,
+    parse_date,
 )
 from app.integrations.extraction import DocumentAnalyzer
 from app.integrations.ollama import OllamaChat, strict_format
@@ -318,6 +319,59 @@ class HealthReportTests(unittest.TestCase):
     def test_a_health_report_has_a_lab_and_date_but_no_financial_year(self):
         facts = self.report().key_facts()
         self.assertEqual((facts.issuer, facts.document_date, facts.financial_year), ("Tata 1mg Labs", date(2026, 4, 18), None))
+
+    def test_risk_categories_give_the_healthy_category_limits(self):
+        # Tata 1mg's lipid profile: the model read the category boundaries as the interval.
+        rows = [
+            ("Cholesterol - Total", 234, "Low (desirable): < 200 mg/dL Moderate (borderline) 200-239 mg/dL High: >/= 240 mg/dL", 200, 240),
+            ("Triglycerides", 107, "Normal: <150, Borderline: 150 - 199, High:200-499, Very High>=500", 150, 500),
+            ("Cholesterol - HDL", 43, "High risk <40mg/dL Low risk>=40mg/dL", 40, 40),
+            ("Cholesterol - LDL", 170, "Desirable: <100 Above desirable: 100 - 129 Borderline high : 130 - 159 "
+             "High : 160 - 189 Very high : >=190", 100, 190),
+            ("Cholesterol : HDL Cholesterol", 5.4, "Desirable : 3.5-4.5 High Risk : >5", 3.5, 4.5),
+            ("Non HDL Cholesterol", 191, "Desirable:< 130, Above Desirable:130 - 159, Borderline High:160 - 189, "
+             "High:190 - 219, Very High: >= 220", 130, 220),
+            ("Lp(a)", 12, "High risk: > 50", 0, 50),
+        ]
+        report = self.report(results=[
+            {"test_name": name, "value": value, "unit": "mg/dL", "reference_range": printed,
+             "reference_low": low, "reference_high": high, "flag": "high" if name == "Cholesterol - HDL" else None}
+            for name, value, printed, low, high in rows
+        ])
+        limits = [(result.reference_low, result.reference_high) for result in report.results]
+        self.assertEqual(limits, [(None, 200), (None, 150), (40, None), (None, 100), (3.5, 4.5), (None, 130), (None, None)])
+        self.assertEqual([result.out_of_range() for result in report.results], [True, False, False, True, True, True, None])
+        # HDL 43 is in the low-risk band: a "high" flag the range contradicts is the model's.
+        self.assertIsNone(report.results[2].flag)
+
+    def test_tests_with_results_are_not_pending_and_order_numbers_are_not_packages(self):
+        report = self.report(package_name="PO10000143292-196", pending_tests=["Cholesterol - LDL", "Vitamin D"])
+        self.assertIsNone(report.package_name)
+        self.assertEqual(report.pending_tests, ["Vitamin D"])
+        self.assertEqual(self.report().package_name, "Comprehensive Silver Full Body Checkup")
+
+    def test_dates_printed_with_a_time_and_a_month_name_are_read(self):
+        report = self.report(collection_date="04/Oct/2025 08:02AM", report_date="04/Oct/2025 05:23PM")
+        self.assertEqual((report.collection_date, report.report_date), (date(2025, 10, 4), date(2025, 10, 4)))
+        self.assertEqual(self.report(collection_date="2025-10-04T08:02:00").collection_date, date(2025, 10, 4))
+        self.assertEqual(self.report(collection_date="18-Apr-2026, 10:30 AM IST").collection_date, date(2026, 4, 18))
+        # A lab value is never taken for a date.
+        self.assertIsNone(parse_date("2-5 /hpf"))
+
+    def test_a_missing_collection_date_is_read_from_its_printed_label(self):
+        # Docling splits the label from its value, as on Tata 1mg's lipid profile.
+        text = ("Collected Via\n\n: TATA 1MG BANGALORE\n\nLab Visit ID\n\n: MGB1422417\n\nCollection Date\n\n"
+                ": 04/Oct/2025 08:02AM\n\nBarcode ID/Order ID : D24028743 / 14442462\n\nReport Date\n\n: 04/Oct/2025 05:23PM")
+        report = self.report(collection_date=None, report_date=None)
+        self.assertIn(HealthReport.MISSING_COLLECTION_FLAG, report.review_flags())
+        self.assertEqual(report.fill_printed_dates(text), ["collection_date", "report_date"])
+        self.assertEqual((report.collection_date, report.report_date), (date(2025, 10, 4), date(2025, 10, 4)))
+        self.assertEqual(report.key_facts().document_date, date(2025, 10, 4))
+        self.assertNotIn(HealthReport.MISSING_COLLECTION_FLAG, report.review_flags())
+        # A date the model read is kept.
+        dated = self.report()
+        self.assertEqual(dated.fill_printed_dates(text), [])
+        self.assertEqual(dated.collection_date, date(2026, 4, 18))
 
     def test_section_rows_go_and_panels_get_one_name(self):
         report = self.report(results=[

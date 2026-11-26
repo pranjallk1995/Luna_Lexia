@@ -109,6 +109,7 @@ class DocumentPipeline:
         if details is None:
             flags.append(self.FAILED_FLAG)
         else:
+            details.fill_printed_dates(content.text())
             flags.extend(details.review_flags())
         return DocumentAnalysis(
             doc_type=kind.key,

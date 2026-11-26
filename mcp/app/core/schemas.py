@@ -27,11 +27,27 @@ DATE_FORMATS = (
     "%d %B %Y",
     "%d-%B-%Y",
     "%d-%b-%y",
+    "%d/%b/%Y",
+    "%d/%B/%Y",
+    "%d/%b/%y",
+    "%d.%b.%Y",
+    "%d %b %y",
+    "%d %B, %Y",
+    "%d %b, %Y",
     "%b %d, %Y",
     "%B %d, %Y",
     "%Y/%m/%d",
 )
 MONTH_FORMATS = ("%Y-%m", "%m/%Y", "%m-%Y", "%b %Y", "%B %Y", "%b-%Y", "%B-%Y", "%b-%y", "%b %y")
+# The date inside a longer printed value: "04/Oct/2025 08:02AM", "2025-10-04T08:02:00".
+DATE_IN_TEXT = re.compile(
+    r"\d{4}-\d{1,2}-\d{1,2}|\d{1,2}(?:\s*[/.-]\s*|\s+)(?:\d{1,2}|[A-Za-z]{3,9})(?:\s*[/.-]\s*|,?\s+)\d{2,4}\b"
+)
+# A time printed after a date: " 08:02AM", "T08:02:00", ", 5:23 PM IST".
+TRAILING_TIME = re.compile(
+    r"(?:[T\s,]+|\s*-\s*)\d{1,2}[:.]\d{2}(?:[:.]\d{2}(?:\.\d+)?)?\s*(?:[AaPp]\.?[Mm]\.?)?"
+    r"(?:\s*(?:IST|UTC|GMT|Z|[+-]\d{2}:?\d{2}))?$"
+)
 MAX_TEXT_LENGTH = 300
 # Dates outside this range are misreadings (e.g. "3103-03-20" for 31/03/2025).
 PLAUSIBLE_YEARS = range(1900, 2101)
@@ -75,19 +91,26 @@ def parse_amount(value: Any) -> float | None:
 def parse_date(value: Any) -> date | None:
     """Parse common date spellings (day before month, as Indian documents print them).
 
+    A date printed with its time ("04/Oct/2025 08:02AM") is read without the time.
     An unreadable or implausible date is dropped, not guessed.
     """
     if value is None:
         return None
+    if isinstance(value, datetime):
+        value = value.date()
     if isinstance(value, date):
         return value if value.year in PLAUSIBLE_YEARS else None
     text = re.sub(r"\s+", " ", str(value)).strip().rstrip(".")
-    for date_format in DATE_FORMATS:
-        try:
-            parsed = datetime.strptime(text, date_format).date()
-        except ValueError:
-            continue
-        return parsed if parsed.year in PLAUSIBLE_YEARS else None
+    candidates = [text]
+    if (untimed := TRAILING_TIME.sub("", text)) != text:
+        candidates.append(re.sub(r"\s*([/.-])\s*", r"\1", untimed))
+    for candidate in candidates:
+        for date_format in DATE_FORMATS:
+            try:
+                parsed = datetime.strptime(candidate, date_format).date()
+            except ValueError:
+                continue
+            return parsed if parsed.year in PLAUSIBLE_YEARS else None
     return None
 
 
@@ -276,6 +299,28 @@ class ExtractedDetails(BaseModel):
     TOTALS_ARE_ROWS: ClassVar[bool] = False
     # A table header that marks the tables holding the rows; None = any table with enough numeric rows.
     RESULT_TABLE: ClassVar[re.Pattern[str] | None] = None
+    # The label each date field is printed under; when the model leaves the field null,
+    # the date printed after its label in the parsed text fills it (see fill_printed_dates).
+    PRINTED_DATES: ClassVar[dict[str, re.Pattern[str]]] = {}
+
+    def fill_printed_dates(self, text: str | None) -> list[str]:
+        """Fill null date fields from the text printed after their label; return the fields filled.
+
+        Docling often splits a label from its value ("Collection Date\\n\\n: 04/Oct/2025"),
+        so a colon, pipe, or blank lines may sit between them. The first match that
+        reads as a date wins.
+        """
+        filled = []
+        for name, label in self.PRINTED_DATES.items():
+            if getattr(self, name, None):
+                continue
+            for match in re.finditer(label.pattern + r"[\s:|\-]*(?P<value>[^\n|]{6,40})", text or "", label.flags):
+                printed = DATE_IN_TEXT.search(match["value"])
+                if printed and (day := parse_date(printed[0])):
+                    setattr(self, name, day)
+                    filled.append(name)
+                    break
+        return filled
 
     def reference_date(self) -> date | None:
         return next(
@@ -1335,6 +1380,16 @@ UPPER_LIMIT = re.compile(r"^\s*(?:<=|≤|=<|<|up\s*to|below)\s*(\d+(?:\.\d+)?)\s
 LOWER_LIMIT = re.compile(r"^\s*(?:>=|≥|=>|>|above)\s*(\d+(?:\.\d+)?)\s*[^\d:]*$", re.IGNORECASE)
 TRAILING_LIMIT = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(or\s+below|or\s+less|or\s+above|or\s+more)\s*$", re.IGNORECASE)
 INTERVAL = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(?:-|–|—|to)\s*(\d+(?:\.\d+)?)\s*[^\d:]*$", re.IGNORECASE)
+# A reference printed as risk categories ("Desirable: < 200 Borderline: 200-239 High: >= 240").
+RISK_CATEGORIES = re.compile(r"desirable|borderline|optimal|\brisk\b|\bhigh\s*:|very\s+high", re.IGNORECASE)
+# The healthy category among them, and its interval: "Low (desirable): < 200", "Low risk>=40", "Normal: <150".
+HEALTHY_CATEGORY = re.compile(
+    r"(?<!above )(?<!above)\b(?:desirable|normal|optimal|low\s*risk)\b\)?\s*:?\s*"
+    r"(?P<interval>(?:<=|>=|=<|=>|>/=|</=|<|>|≤|≥)?\s*\d+(?:\.\d+)?(?:\s*(?:-|–|—|to)\s*\d+(?:\.\d+)?)?)",
+    re.IGNORECASE,
+)
+# A package name that is only an order or visit number: "PO10000143292-196".
+ORDER_NUMBER = re.compile(r"(?:(?:po|order|visit|ref)\s*(?:no\.?|number|id)?\s*[:#.-]?\s*)?[A-Z]{0,4}[\d/_#.-]{4,}[A-Z\d/_.-]*", re.IGNORECASE)
 # Acronyms that name one test however a lab spells it out: "SGOT (Aspartate Aminotransferase)".
 ACRONYM = re.compile(r"\b[A-Z][A-Z0-9]{2,}\b")
 # The panel a test belongs to: by the section it is printed under, else by its own name.
@@ -1404,6 +1459,28 @@ def printed_limits(text: str | None) -> tuple[float | None, float | None] | None
     return None
 
 
+def category_limits(text: str | None) -> tuple[float | None, float | None] | None:
+    """The limits of the healthy category in a reference printed as risk categories.
+
+    "Desirable: <100 Above desirable: 100 - 129 ..." is (None, 100); "High risk <40
+    Low risk>=40" is (40, None). (None, None) when the categories name no healthy
+    one, and None when the reference is not printed as risk categories at all.
+    """
+    if not text or not RISK_CATEGORIES.search(text):
+        return None
+    if match := HEALTHY_CATEGORY.search(text):
+        interval = match["interval"].replace(">/=", ">=").replace("</=", "<=").replace("=>", ">=")
+        if limits := printed_limits(interval):
+            return limits
+    return None, None
+
+
+def parse_package_name(value: Any) -> str | None:
+    """A test package's name; an order or visit number in its place is dropped."""
+    text = clean_text(value)
+    return None if text and ORDER_NUMBER.fullmatch(text) else text
+
+
 class LabResult(Item):
     """One test on a lab report; the report's doctor summary and its detailed pages repeat many."""
 
@@ -1455,6 +1532,20 @@ class HealthReport(ExtractedDetails):
     ISSUER_FIELD = "lab_name"
     DATE_FIELDS = ("collection_date", "report_date")
     TRACKS_FINANCIAL_YEAR = False
+    # Results trend by the day the sample was taken, so a report must have one.
+    PRINTED_DATES = {
+        "collection_date": re.compile(
+            r"\b(?:sample\s+)?(?:collection\s+(?:date(?:\s*(?:&|and|/)\s*time)?|on|time)|collected\s+(?:on|date|at)"
+            r"|date\s+of\s+(?:sample\s+)?collection|sample\s+date)\b",
+            re.IGNORECASE,
+        ),
+        "report_date": re.compile(
+            r"\b(?:report(?:ed)?\s+(?:date(?:\s*(?:&|and|/)\s*time)?|on)|date\s+of\s+report)\b", re.IGNORECASE
+        ),
+    }
+    MISSING_COLLECTION_FLAG: ClassVar[str] = (
+        "The sample collection date was not found; set collection_date so the results join their trends."
+    )
 
     lab_name: Text = Field(None, description="Diagnostic lab or provider, e.g. Tata 1mg Labs, Thyrocare")
     patient_name: Text = None
@@ -1462,9 +1553,17 @@ class HealthReport(ExtractedDetails):
     patient_gender: Choice("male", "female", "other") = None
     patient_id: Text = Field(None, description="Patient, lab visit, or sample ID")
     referred_by: Text = Field(None, description="Referring doctor, if printed")
-    package_name: Text = Field(None, description="Test package or panels ordered, e.g. Comprehensive Full Body Checkup")
+    package_name: Annotated[str | None, BeforeValidator(parse_package_name)] = Field(
+        None,
+        description="Test package or panels ordered, e.g. Comprehensive Full Body Checkup; not a PO, order, "
+        "or visit number",
+    )
     sample_types: Text = Field(None, description="Samples taken, e.g. Whole blood EDTA, Serum, Urine")
-    collection_date: Day = Field(None, description="Sample collection date")
+    collection_date: Day = Field(
+        None,
+        description="Required: the sample collection date, printed beside Collection Date, Collected On, or "
+        "Sample Collected, e.g. 04/Oct/2025 08:02AM; copy it as printed",
+    )
     report_date: Day = Field(None, description="Date the report was issued")
     report_status: Choice("final", "partial", "provisional") = None
     results: list[LabResult] = Field(
@@ -1474,7 +1573,9 @@ class HealthReport(ExtractedDetails):
         "interpretation or guideline tables (risk groups, diagnosis criteria)",
     )
     pending_tests: list[str] = Field(
-        default_factory=list, max_length=30, description="Tests the report lists as pending or to follow"
+        default_factory=list,
+        max_length=30,
+        description="Only tests the report marks as pending or to follow, without a result; else empty",
     )
 
     @model_validator(mode="after")
@@ -1504,7 +1605,8 @@ class HealthReport(ExtractedDetails):
                 result.value_text = None  # Beside a number, the text is only its unit or a label.
             if result.value is None and not result.reference_range and not result.unit:
                 continue  # A section row with a note, such as "Urine Routine: Automated".
-            if limits := printed_limits(result.reference_range):
+            if limits := printed_limits(result.reference_range) or category_limits(result.reference_range):
+                # Risk categories give the healthy one's limits, never the model's pick of boundaries.
                 result.reference_low, result.reference_high = limits
             elif None not in (result.reference_low, result.reference_high) and result.reference_low > result.reference_high:
                 result.reference_low = result.reference_high = None  # Read from a table of categories.
@@ -1527,6 +1629,9 @@ class HealthReport(ExtractedDetails):
             if outside is not None and result.flag in ("low", "high", "normal") and (result.flag == "normal") == outside:
                 result.flag = None  # The printed interval contradicts it: the model's flag, not the lab's.
         self.results = merged
+        # A test with a result is not pending, though the model may list every ordered test.
+        reported = {test_key(result.test_name) for result in merged}
+        self.pending_tests = [test for test in self.pending_tests if test_key(test) not in reported]
         return self
 
     @staticmethod
@@ -1546,6 +1651,8 @@ class HealthReport(ExtractedDetails):
         flags = []
         if not self.results:
             flags.append("No test results were found.")
+        if not self.collection_date:
+            flags.append(self.MISSING_COLLECTION_FLAG)
         if self.collection_date and self.report_date and self.report_date < self.collection_date:
             flags.append(f"The report date ({self.report_date}) is before the sample collection ({self.collection_date}).")
         return flags
