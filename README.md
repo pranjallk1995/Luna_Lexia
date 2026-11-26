@@ -199,12 +199,21 @@ tools show the person's lab reports: each result against the range its report pr
 it moved since the last report, and the PDF itself. Upload a lab report here (or import it
 from Gmail or Drive); it is read as a `health_report`, and Vita shows it at once. Nothing is
 copied into Vita: it reads Lexia over the shared network with `LUNALEXIA_API_TOKEN`, like
-Fiora, and only these two routes:
+Fiora, and only these three routes:
 
 | Route | Purpose |
 | --- | --- |
 | `GET /api/metadata?doc_type=health_report` | The person's visible health reports with their `extracted` results and `review_flags` |
 | `GET /api/public/documents/{document_id}` | A report's PDF, which Vita's backend passes to its own page |
+| `GET /api/lab-tests` | What each of the person's tests measures, by test key, which Vita shows when a test is opened |
+
+Opening a test in Vita says what it measures. When a health report is stored, the local
+model (`DOCUMENT_MODEL`) writes one or two plain sentences for each test it has not explained
+before: what the test measures and why it is checked, with no ranges, advice, or reading of
+anyone's results. Only test names reach the model. It runs in the background, so uploads
+never wait for it, and on start for reports stored earlier. Tests match across reports by
+their key, as Vita matches them. An assistant can review them with `list_lab_tests` and
+write better ones with `explain_lab_tests`; the model never overwrites an assistant's.
 
 Set the same `LUNALEXIA_API_TOKEN` in `Luna_Vita/.env` as here. Upgrading from 2.2 or earlier: lab
 reports stored before 2.3.0 are `medical_record`s; re-extract each with `doc_type`
@@ -650,6 +659,11 @@ up to date in the background:
 
 A run keeps no state of its own: selection is by model and schema version, so
 starting again after a stop or restart continues with the documents still left.
+
+### Lab tests
+
+- `list_lab_tests` - every test in the person's health reports with its panel, how many reports have it, `about` (what it measures, shown in Luna Vita when the test is opened), and `source`: `model` (the local model wrote it on upload), `assistant`, or null when none exists yet; `missing_only=true` lists only those without one.
+- `explain_lab_tests` - save up to 200 `{"test_name", "about"}` explanations, one or two plain sentences each on what the test measures and why it is checked, with no ranges, advice, or reading of results. They replace the model's, and the model never overwrites them.
 
 ### Semantic search and answers
 
