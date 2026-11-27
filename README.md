@@ -149,13 +149,14 @@ reliable than asking a 7B model to reformat them.
 | `provident_fund_document` | UAN card, PF Form 11 and Form 2, EPS and gratuity forms, PF passbook | Kind, member, UAN, PF account, establishment, joining date, nominees and shares, balances | Nominee shares total 100%; passbooks show a balance |
 | `legal_document` | Legal notices, NDAs, contracts, affidavits, powers of attorney, court orders | Kind, parties, advocate, date, reference, subject, demands, deadline, amount claimed, effective dates | — |
 | `health_report` | Lab test reports: blood tests, full-body check-ups, lipid, thyroid, liver, kidney, vitamin, hormone, and urine panels | Lab, patient, age, gender, patient ID, package, samples, collection and report dates, status, every result (panel, test, value or text, unit, printed range and its limits, printed flag, method, an earlier value it prints), pending tests | Up to 250 results, read in batches; a test printed in the doctor summary and again on its page is one row; results present; report after collection; a printed flag agrees with its range; a range's lower limit below its upper |
-| `medical_record` | Medical and fitness certificates, prescriptions, discharge summaries, bills | Kind, patient, provider, doctor, date, purpose, findings, fitness, amount paid | — |
+| `consultation_summary` | Doctor's visit summaries (outpatient, follow-up, teleconsultation) and prescriptions | Hospital, doctor, specialty, date, visit type, patient ID, complaints, diagnoses, history, vitals (heart rate, blood pressure, temperature, breathing rate, SpO2, height, weight, BMI), each medicine (name, drug, strength, form, dose schedule such as 0-0-0-1, frequency, timing, route, duration, start date), tests ordered now and for the next visit, advice, follow-up | Blood pressure in the right order; BMI matches height and weight; follow-up after the visit; SpO2 plausible. The patient's phone and address are not extracted |
+| `medical_record` | Medical and fitness certificates, discharge summaries, hospital bills | Kind, patient, provider, doctor, date, purpose, findings, fitness, amount paid | — |
 | `other` | Anything else, such as onboarding and verification forms and cover letters | Issuer, recipient, date, reference, key amounts and dates | — |
 
 Every type also gets generic checks: `*_from` dates before `*_to` dates, PAN,
 TAN, GSTIN, and IFSC formats, and the type's key amount being present (for
 types where every such document has one). Identity, education, career, legal,
-medical, health report, vehicle, PF, and bank-proof documents are not given a financial year
+medical, health report, consultation, vehicle, PF, and bank-proof documents are not given a financial year
 from their dates, so a 2017 marksheet is not tagged `fy 2017-18`. The
 full JSON schema of each type is available from `list_document_types` and
 `GET /api/document-types`. Schemas live in `mcp/app/core/schemas.py`; bump

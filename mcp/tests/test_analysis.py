@@ -13,6 +13,7 @@ from app.core.schemas import (
     BankAccountProof,
     BankStatement,
     EducationalCertificate,
+    ConsultationSummary,
     Form16,
     HealthReport,
     IdentityDocument,
@@ -289,13 +290,13 @@ class CareerAndPersonalTypeTests(unittest.TestCase):
 
 
 class HealthReportTests(unittest.TestCase):
-    RESULT = {"panel": "Lipid Profile", "test_name": "Cholesterol - LDL", "value": "153", "unit": "mg/dl",
+    RESULT = {"panel": "Lipid Profile", "test_name": "Cholesterol - LDL", "value": "142", "unit": "mg/dl",
               "reference_range": "<= 99.9", "reference_low": "100", "reference_high": "99.9"}
 
     def report(self, **fields) -> HealthReport:
         return HealthReport.model_validate({
-            "lab_name": "Tata 1mg Labs", "collection_date": "18/04/2026", "report_date": "18-Apr-2026",
-            "package_name": "Comprehensive Silver Full Body Checkup", "results": [self.RESULT], **fields,
+            "lab_name": "Acme Diagnostics", "collection_date": "09/03/2026", "report_date": "09-Mar-2026",
+            "package_name": "Full Body Checkup Basic", "results": [self.RESULT], **fields,
         })
 
     def test_results_read_as_printed(self):
@@ -308,7 +309,7 @@ class HealthReportTests(unittest.TestCase):
         ])
         ldl, glucose, neutrophils, estradiol, fasting = report.results
         # Only the printed upper limit: the model's lower limit came from a table of categories.
-        self.assertEqual((ldl.value, ldl.reference_low, ldl.reference_high), (153.0, None, 99.9))
+        self.assertEqual((ldl.value, ldl.reference_low, ldl.reference_high), (142.0, None, 99.9))
         self.assertTrue(ldl.out_of_range())
         self.assertEqual((glucose.value, glucose.value_text, glucose.panel), (None, "Negative", "Urine Routine & Microscopy"))
         self.assertEqual((neutrophils.value, neutrophils.reference_low, neutrophils.reference_high), (2.72, 2.0, 7.0))
@@ -318,18 +319,18 @@ class HealthReportTests(unittest.TestCase):
 
     def test_a_health_report_has_a_lab_and_date_but_no_financial_year(self):
         facts = self.report().key_facts()
-        self.assertEqual((facts.issuer, facts.document_date, facts.financial_year), ("Tata 1mg Labs", date(2026, 4, 18), None))
+        self.assertEqual((facts.issuer, facts.document_date, facts.financial_year), ("Acme Diagnostics", date(2026, 3, 9), None))
 
     def test_risk_categories_give_the_healthy_category_limits(self):
-        # Tata 1mg's lipid profile: the model read the category boundaries as the interval.
+        # one lab's lipid profile: the model read the category boundaries as the interval.
         rows = [
-            ("Cholesterol - Total", 234, "Low (desirable): < 200 mg/dL Moderate (borderline) 200-239 mg/dL High: >/= 240 mg/dL", 200, 240),
-            ("Triglycerides", 107, "Normal: <150, Borderline: 150 - 199, High:200-499, Very High>=500", 150, 500),
-            ("Cholesterol - HDL", 43, "High risk <40mg/dL Low risk>=40mg/dL", 40, 40),
-            ("Cholesterol - LDL", 170, "Desirable: <100 Above desirable: 100 - 129 Borderline high : 130 - 159 "
+            ("Cholesterol - Total", 221, "Low (desirable): < 200 mg/dL Moderate (borderline) 200-239 mg/dL High: >/= 240 mg/dL", 200, 240),
+            ("Triglycerides", 98, "Normal: <150, Borderline: 150 - 199, High:200-499, Very High>=500", 150, 500),
+            ("Cholesterol - HDL", 47, "High risk <40mg/dL Low risk>=40mg/dL", 40, 40),
+            ("Cholesterol - LDL", 161, "Desirable: <100 Above desirable: 100 - 129 Borderline high : 130 - 159 "
              "High : 160 - 189 Very high : >=190", 100, 190),
-            ("Cholesterol : HDL Cholesterol", 5.4, "Desirable : 3.5-4.5 High Risk : >5", 3.5, 4.5),
-            ("Non HDL Cholesterol", 191, "Desirable:< 130, Above Desirable:130 - 159, Borderline High:160 - 189, "
+            ("Cholesterol : HDL Cholesterol", 4.9, "Desirable : 3.5-4.5 High Risk : >5", 3.5, 4.5),
+            ("Non HDL Cholesterol", 176, "Desirable:< 130, Above Desirable:130 - 159, Borderline High:160 - 189, "
              "High:190 - 219, Very High: >= 220", 130, 220),
             ("Lp(a)", 12, "High risk: > 50", 0, 50),
         ]
@@ -348,36 +349,36 @@ class HealthReportTests(unittest.TestCase):
         report = self.report(package_name="PO10000143292-196", pending_tests=["Cholesterol - LDL", "Vitamin D"])
         self.assertIsNone(report.package_name)
         self.assertEqual(report.pending_tests, ["Vitamin D"])
-        self.assertEqual(self.report().package_name, "Comprehensive Silver Full Body Checkup")
+        self.assertEqual(self.report().package_name, "Full Body Checkup Basic")
 
     def test_dates_printed_with_a_time_and_a_month_name_are_read(self):
-        report = self.report(collection_date="04/Oct/2025 08:02AM", report_date="04/Oct/2025 05:23PM")
-        self.assertEqual((report.collection_date, report.report_date), (date(2025, 10, 4), date(2025, 10, 4)))
-        self.assertEqual(self.report(collection_date="2025-10-04T08:02:00").collection_date, date(2025, 10, 4))
-        self.assertEqual(self.report(collection_date="18-Apr-2026, 10:30 AM IST").collection_date, date(2026, 4, 18))
+        report = self.report(collection_date="12/Sep/2025 08:02AM", report_date="12/Sep/2025 05:23PM")
+        self.assertEqual((report.collection_date, report.report_date), (date(2025, 9, 12), date(2025, 9, 12)))
+        self.assertEqual(self.report(collection_date="2025-09-12T08:02:00").collection_date, date(2025, 9, 12))
+        self.assertEqual(self.report(collection_date="09-Mar-2026, 10:30 AM IST").collection_date, date(2026, 3, 9))
         # A lab value is never taken for a date.
         self.assertIsNone(parse_date("2-5 /hpf"))
 
     def test_a_missing_collection_date_is_read_from_its_printed_label(self):
-        # Docling splits the label from its value, as on Tata 1mg's lipid profile.
-        text = ("Collected Via\n\n: TATA 1MG BANGALORE\n\nLab Visit ID\n\n: MGB1422417\n\nCollection Date\n\n"
-                ": 04/Oct/2025 08:02AM\n\nBarcode ID/Order ID : D24028743 / 14442462\n\nReport Date\n\n: 04/Oct/2025 05:23PM")
+        # Docling splits the label from its value, as on one lab's lipid profile.
+        text = ("Collected Via\n\n: ACME DIAGNOSTICS PUNE\n\nLab Visit ID\n\n: LAB0000001\n\nCollection Date\n\n"
+                ": 12/Sep/2025 08:02AM\n\nBarcode ID/Order ID : BC0000001 / 10000001\n\nReport Date\n\n: 12/Sep/2025 05:23PM")
         report = self.report(collection_date=None, report_date=None)
         self.assertIn(HealthReport.MISSING_COLLECTION_FLAG, report.review_flags())
         self.assertEqual(report.fill_printed_dates(text), ["collection_date", "report_date"])
-        self.assertEqual((report.collection_date, report.report_date), (date(2025, 10, 4), date(2025, 10, 4)))
-        self.assertEqual(report.key_facts().document_date, date(2025, 10, 4))
+        self.assertEqual((report.collection_date, report.report_date), (date(2025, 9, 12), date(2025, 9, 12)))
+        self.assertEqual(report.key_facts().document_date, date(2025, 9, 12))
         self.assertNotIn(HealthReport.MISSING_COLLECTION_FLAG, report.review_flags())
         # A date the model read is kept.
         dated = self.report()
         self.assertEqual(dated.fill_printed_dates(text), [])
-        self.assertEqual(dated.collection_date, date(2026, 4, 18))
+        self.assertEqual(dated.collection_date, date(2026, 3, 9))
 
     def test_section_rows_go_and_panels_get_one_name(self):
         report = self.report(results=[
             {"test_name": "Lipid Profile", "panel": "Lipid Profile", "value_text": "18 Apr 26"},
             {"test_name": "Uric Acid", "panel": "Uric Acid", "value": 5.5},
-            {"test_name": "MCV", "panel": "COMPREHENSIVE SILVER FULL BODY CHECKUP WITH SMART REPORT", "value": 85.3},
+            {"test_name": "MCV", "panel": "FULL BODY CHECKUP BASIC", "value": 85.3},
             {"test_name": "Iron Serum", "panel": "Iron Studies, Basic", "value": 145},
             {"test_name": "Glycosylated Hemoglobin (HbA1c)", "value": 5.1},
             {"test_name": "Something rare", "panel": "Special Tests", "value": 1},
@@ -390,41 +391,41 @@ class HealthReportTests(unittest.TestCase):
         )
 
     def test_the_summary_and_detail_pages_of_one_test_are_merged(self):
-        summary = {"test_name": "Cholesterol-LDL", "value": 153, "reference_range": "<= 99.9", "previous_value": 170,
+        summary = {"test_name": "Cholesterol-LDL", "value": 142, "reference_range": "<= 99.9", "previous_value": 161,
                    "previous_date": "04 Oct 2025"}
         detail = {**self.RESULT, "reference_range": "Desirable: <100", "method": "Calculated"}
         sgot = {"test_name": "Aspartate Transaminase (SGOT)", "value": 23, "unit": "U/L"}
         sgot_detail = {"test_name": "SGOT (Aspartate Aminotransferase)", "value": 23, "unit": "U/L", "method": "NADH"}
         report = self.report(results=[
             summary, detail, sgot, sgot_detail,
-            {"test_name": "TSH", "value": 1.226}, {"test_name": "TSH", "value": 1.205},
+            {"test_name": "TSH", "value": 2.31}, {"test_name": "TSH", "value": 2.29},
             {"test_name": "Red blood cell", "value": 0, "unit": "/hpf"}, {"test_name": "Red Blood Cells", "value": "0.00", "unit": "/hpf"},
             {"test_name": "Calcium oxalate monohydrate crystals", "value": 0}, {"test_name": "Calcium oxalate dihydrate crystals", "value": 0},
         ])
         self.assertEqual(len(report.results), 7)
         ldl = report.results[0]
-        self.assertEqual((ldl.previous_value, ldl.reference_range, ldl.reference_high, ldl.method), (170.0, "<= 99.9", 99.9, "Calculated"))
+        self.assertEqual((ldl.previous_value, ldl.reference_range, ldl.reference_high, ldl.method), (161.0, "<= 99.9", 99.9, "Calculated"))
         self.assertEqual(report.results[1].method, "NADH")
 
     def test_a_flag_the_printed_range_contradicts_is_cleared(self):
         report = self.report(results=[
             {**self.RESULT, "flag": "Normal"},
             {"test_name": "LDL : HDL Cholesterol", "value": 3.19, "reference_range": "0 - 3.5", "flag": "high"},
-            {"test_name": "Urea", "value": 48.66, "reference_range": "19.0 - 44.0", "flag": "H"},
+            {"test_name": "Urea", "value": 47.2, "reference_range": "19.0 - 44.0", "flag": "H"},
             {"test_name": "Odd", "value": 1, "flag": "low"},
         ])
         self.assertEqual([result.flag for result in report.results], [None, None, "high", "low"])
 
     def test_units_text_and_bounds_read_cleanly(self):
         report = self.report(results=[
-            {"test_name": "Cholesterol - LDL", "value": 153, "value_text": "mg/dl", "unit": "mg/dl", "reference_range": "<= 99.9"},
+            {"test_name": "Cholesterol - LDL", "value": 142, "value_text": "mg/dl", "unit": "mg/dl", "reference_range": "<= 99.9"},
             {"test_name": "Estradiol (E2)", "value": 24, "value_text": "< 24", "unit": "pg/mL", "reference_range": "11-44"},
             {"test_name": "Iron Serum", "value": 145, "unit": "Âµg/dL"},
             {"test_name": "Urine Routine", "value_text": "Automated"},
             {"test_name": "Glucose", "panel": "", "value_text": "Negative", "reference_range": "Negative"},
             {"test_name": "Red blood cell", "value": 0, "unit": "/hpf"},
-            {"test_name": "Thyroid Stimulating Hormone - Ultra Sensitive", "value": 1.226, "unit": "µIU/mL"},
-            {"test_name": "Thyroid Stimulating Hormone -", "panel": "Infertility panel for men", "value": 1.226, "unit": "µIU/mL"},
+            {"test_name": "Thyroid Stimulating Hormone - Ultra Sensitive", "value": 2.31, "unit": "µIU/mL"},
+            {"test_name": "Thyroid Stimulating Hormone -", "panel": "Hormone panel", "value": 2.31, "unit": "µIU/mL"},
         ])
         ldl, estradiol, iron, glucose, cells, tsh = report.results
         self.assertIsNone(ldl.value_text)
@@ -439,12 +440,53 @@ class HealthReportTests(unittest.TestCase):
         self.assertIsNone(self.report(results=[summary, detail]).results[0].flag)
 
     def test_report_rules(self):
-        flags = self.report(report_date="2026-04-01").review_flags()
+        flags = self.report(report_date="2026-03-01").review_flags()
         self.assertTrue(any("before the sample collection" in flag for flag in flags))
         self.assertIn("No test results were found.", HealthReport().review_flags())
 
     def test_lab_reports_are_not_medical_records(self):
         self.assertIn("health_report", DOCUMENT_TYPES["medical_record"].description)
+
+
+class ConsultationSummaryTests(unittest.TestCase):
+    VISIT = {
+        "hospital": "Lakeside Hospital", "doctor": "Dr. Asha Rao", "specialty": "Cardiology",
+        "consultation_date": "14/08/2026", "consultation_type": "OP, New", "diagnoses": ["hypertension"],
+        "heart_rate_bpm": "76", "blood_pressure": "128/82 mmHg", "spo2_percent": "98", "height_cm": "168",
+        "weight_kg": "70.2", "bmi": "24.87",
+        "medications": [{"name": "AMLODIPINE-TABLET-5MG", "generic_name": "Amlodipine", "strength": "5 mg",
+                         "dose_schedule": "1-0-0", "frequency": "Once daily", "timing": "after breakfast",
+                         "duration": "1 month", "start_date": "Aug 14, 2026"}],
+        "follow_up_tests": ["Kidney function test"], "follow_up_after": "after 1 Month",
+    }
+
+    def test_a_visit_keeps_its_doctor_vitals_medicines_and_follow_up(self):
+        visit = ConsultationSummary.model_validate(self.VISIT)
+        self.assertEqual((visit.systolic_bp, visit.diastolic_bp), (128.0, 82.0))
+        self.assertEqual(visit.medications[0].start_date, date(2026, 8, 14))
+        self.assertEqual(visit.review_flags(), [])
+        facts = visit.key_facts()
+        self.assertEqual((facts.issuer, facts.document_date, facts.financial_year), ("Lakeside Hospital", date(2026, 8, 14), None))
+
+    def test_a_copied_instruction_line_and_visit_date_are_tidied(self):
+        visit = ConsultationSummary.model_validate({
+            **self.VISIT, "follow_up_date": "14/08/2026",
+            "medications": [{"name": "X", "dose_schedule": "Twice daily ( 1 - 0 - 0 - 1 ) tablet orally after food"},
+                            {"name": "Y", "dose_schedule": "1-0-1"}, {"name": "Z", "dose_schedule": "SOS"}],
+        })
+        self.assertIsNone(visit.follow_up_date)
+        self.assertEqual([m.dose_schedule for m in visit.medications], ["1-0-0-1", "1-0-1", "SOS"])
+
+    def test_visit_rules(self):
+        flags = ConsultationSummary.model_validate({
+            **self.VISIT, "blood_pressure": "70/120", "bmi": 30, "spo2_percent": 9, "follow_up_date": "2026-08-01",
+        }).review_flags()
+        for expected in ("lower number first", "does not match weight and height", "before the consultation", "SpO2 9%"):
+            self.assertTrue(any(expected in flag for flag in flags), expected)
+
+    def test_prescriptions_and_visit_summaries_are_consultations(self):
+        self.assertIn("consultation_summary", DOCUMENT_TYPES["medical_record"].description)
+        self.assertIn("prescription", DOCUMENT_TYPES["consultation_summary"].description)
 
 
 class DoclingFallbackTests(unittest.TestCase):

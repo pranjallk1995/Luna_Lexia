@@ -181,7 +181,7 @@ class HealthReportRowTests(unittest.TestCase):
 
         chat = ScriptedChat([
             {**CLASSIFICATION, "doc_type": "health_report", "title": "Lab report"},
-            {"lab_name": "Acme Labs", "collection_date": "18/04/2026"},
+            {"lab_name": "Acme Labs", "collection_date": "09/03/2026"},
             results(1, 25),
             results(26, 30),
         ])

@@ -39,7 +39,7 @@ DATE_FORMATS = (
     "%Y/%m/%d",
 )
 MONTH_FORMATS = ("%Y-%m", "%m/%Y", "%m-%Y", "%b %Y", "%B %Y", "%b-%Y", "%B-%Y", "%b-%y", "%b %y")
-# The date inside a longer printed value: "04/Oct/2025 08:02AM", "2025-10-04T08:02:00".
+# The date inside a longer printed value: "12/Sep/2025 08:02AM", "2025-09-12T08:02:00".
 DATE_IN_TEXT = re.compile(
     r"\d{4}-\d{1,2}-\d{1,2}|\d{1,2}(?:\s*[/.-]\s*|\s+)(?:\d{1,2}|[A-Za-z]{3,9})(?:\s*[/.-]\s*|,?\s+)\d{2,4}\b"
 )
@@ -91,7 +91,7 @@ def parse_amount(value: Any) -> float | None:
 def parse_date(value: Any) -> date | None:
     """Parse common date spellings (day before month, as Indian documents print them).
 
-    A date printed with its time ("04/Oct/2025 08:02AM") is read without the time.
+    A date printed with its time ("12/Sep/2025 08:02AM") is read without the time.
     An unreadable or implausible date is dropped, not guessed.
     """
     if value is None:
@@ -306,7 +306,7 @@ class ExtractedDetails(BaseModel):
     def fill_printed_dates(self, text: str | None) -> list[str]:
         """Fill null date fields from the text printed after their label; return the fields filled.
 
-        Docling often splits a label from its value ("Collection Date\\n\\n: 04/Oct/2025"),
+        Docling often splits a label from its value ("Collection Date\\n\\n: 12/Sep/2025"),
         so a colon, pipe, or blank lines may sit between them. The first match that
         reads as a date wins.
         """
@@ -1366,6 +1366,110 @@ class MedicalRecord(ExtractedDetails):
     amount_paid: Money = Field(None, description="Bills only; preventive check-ups count for 80D")
 
 
+BLOOD_PRESSURE = re.compile(r"(\d{2,3})\s*/\s*(\d{2,3})")
+# A prescription's doses through the day: "0-0-0-1" (morning, noon, evening, night), "1-0-1".
+DOSE_SCHEDULE = re.compile(r"\b(?:\d(?:\.\d)?|½)(?:\s*-\s*(?:\d(?:\.\d)?|½)){1,3}\b")
+
+
+class Medication(Item):
+    """One medicine a doctor ordered, as the prescription prints it."""
+
+    name: Text = Field(None, description="Medicine as printed, e.g. AMLODIPINE-TABLET-5MG")
+    generic_name: Text = Field(None, description="The drug itself, e.g. Amlodipine")
+    strength: Text = Field(None, description="e.g. 5 mg")
+    form: Text = Field(None, description="Tablet, capsule, syrup, injection, ...")
+    dose_schedule: Text = Field(None, description="Doses through the day as printed, e.g. 0-0-0-1 or 1-0-1")
+    frequency: Text = Field(None, description="e.g. Once daily, Twice daily, SOS")
+    timing: Text = Field(None, description="When to take it, e.g. at bed time, after food")
+    route: Text = Field(None, description="e.g. orally")
+    duration: Text = Field(None, description="e.g. 5 days, 3 months, till review")
+    start_date: Day = None
+    instructions: Text = Field(None, description="Anything else printed for this medicine")
+
+    @model_validator(mode="after")
+    def bare_schedule(self) -> "Medication":
+        """Keep only the doses ("0-0-0-1") when the model copied the whole instruction line."""
+        if self.dose_schedule and (match := DOSE_SCHEDULE.search(self.dose_schedule)):
+            self.dose_schedule = re.sub(r"\s+", "", match[0])
+        return self
+
+
+class ConsultationSummary(ExtractedDetails):
+    """A doctor's consultation: an outpatient or follow-up visit summary, or a prescription.
+
+    Keeps the doctor and visit, what was found (complaints, diagnoses, vitals), what was
+    ordered (medicines, tests), and when to come back. The patient's phone number and
+    home address are deliberately not extracted.
+    """
+
+    ISSUER_FIELD = "hospital"
+    DATE_FIELDS = ("consultation_date",)
+    AMOUNT_FIELD = "amount_paid"
+    AMOUNT_REQUIRED = False
+    TRACKS_FINANCIAL_YEAR = False
+
+    hospital: Text = Field(None, description="Hospital or clinic")
+    doctor: Text = Field(None, description="Consultant's name as printed, e.g. Dr. Asha Rao")
+    specialty: Text = Field(None, description="Department or specialty, e.g. Cardiology, Dermatology")
+    consultation_date: Day = None
+    consultation_type: Text = Field(None, description="As printed, e.g. OP, New; Revisit; Teleconsultation")
+    patient_name: Text = None
+    patient_id: Text = Field(None, description="MRN, UHID, or patient ID")
+    patient_age: Text = Field(None, description="Age as printed, e.g. 45 Years")
+    patient_gender: Choice("male", "female", "other") = None
+    complaints: list[str] = Field(default_factory=list, max_length=20, description="Chief complaints and presenting problems")
+    diagnoses: list[str] = Field(default_factory=list, max_length=20, description="Diagnoses or conditions, e.g. hypertension")
+    history: Text = Field(None, description="Past, family, or social history in one sentence, e.g. Father has diabetes")
+    heart_rate_bpm: Number = None
+    blood_pressure: Text = Field(None, description="As printed, e.g. 120/80 mmHg")
+    systolic_bp: Number = Field(None, description="The upper number of the blood pressure")
+    diastolic_bp: Number = Field(None, description="The lower number of the blood pressure")
+    temperature_f: Number = Field(None, description="Body temperature in degrees Fahrenheit")
+    respiratory_rate: Number = Field(None, description="Breaths per minute")
+    spo2_percent: Number = None
+    height_cm: Number = None
+    weight_kg: Number = None
+    bmi: Number = None
+    medications: list[Medication] = Field(default_factory=list, max_length=30)
+    tests_ordered: list[str] = Field(
+        default_factory=list, max_length=30, description="Investigations ordered at this visit; empty when it says none were"
+    )
+    follow_up_tests: list[str] = Field(
+        default_factory=list,
+        max_length=30,
+        description="Tests to bring to the next visit, as listed under Follow-up Investigation, e.g. "
+        "KIDNEY FUNCTION TEST (UREA, CREATININE)",
+    )
+    advice: Text = Field(None, description="Diet, lifestyle, or other advice in one sentence")
+    follow_up_after: Text = Field(None, description="When to come back as printed, e.g. after 1 Month")
+    follow_up_date: Day = Field(None, description="Only a follow-up date printed as a date; not the consultation date")
+    amount_paid: Money = Field(None, description="Consultation fee, only if printed")
+
+    @model_validator(mode="after")
+    def read_blood_pressure(self) -> "ConsultationSummary":
+        """Fill the two blood pressure numbers from the printed reading when they are missing."""
+        if self.blood_pressure and (match := BLOOD_PRESSURE.search(self.blood_pressure)):
+            self.systolic_bp = self.systolic_bp or float(match[1])
+            self.diastolic_bp = self.diastolic_bp or float(match[2])
+        if self.follow_up_date and self.follow_up_date == self.consultation_date:
+            self.follow_up_date = None  # the visit's own date, copied into the follow-up
+        return self
+
+    def rules(self) -> list[str]:
+        flags = []
+        if None not in (self.systolic_bp, self.diastolic_bp) and self.systolic_bp <= self.diastolic_bp:
+            flags.append(f"Blood pressure {self.systolic_bp:g}/{self.diastolic_bp:g} has the lower number first.")
+        if None not in (self.height_cm, self.weight_kg, self.bmi) and self.height_cm > 0:
+            expected = self.weight_kg / (self.height_cm / 100) ** 2
+            if abs(expected - self.bmi) > 0.5:
+                flags.append(f"BMI {self.bmi:g} does not match weight and height (about {expected:.1f}).")
+        if self.consultation_date and self.follow_up_date and self.follow_up_date < self.consultation_date:
+            flags.append(f"The follow-up date ({self.follow_up_date}) is before the consultation ({self.consultation_date}).")
+        if self.spo2_percent is not None and not 50 <= self.spo2_percent <= 100:
+            flags.append(f"SpO2 {self.spo2_percent:g}% is not a plausible reading.")
+        return flags
+
+
 def test_key(name: str | None) -> str:
     """A test name without case, spacing, punctuation, or a plural "s": "Red Blood Cells" is "red blood cell"."""
     return re.sub(r"[^0-9a-z]+", "", (name or "").casefold()).removesuffix("s")
@@ -1428,7 +1532,7 @@ def lab_panel(
 
     A count per microscope field (/hpf), or a dipstick's text result for glucose or
     protein, is urine; otherwise the test's own name decides, then the section it is
-    printed under (an "infertility panel" may hold a thyroid test).
+    printed under (a "hormone panel" may hold a thyroid test).
     """
     printed = (panel or "").strip()
     if printed and (test_key(printed) == test_key(test_name) or (package and test_key(printed) in test_key(package))):
@@ -1491,7 +1595,7 @@ class LabResult(Item):
     )
     test_name: Text = Field(None, description="Test or parameter name as printed, e.g. Cholesterol - LDL")
     value: Number = Field(
-        None, description="Numeric result as printed, e.g. 153 or 4.00; null when not a number or printed with < or >"
+        None, description="Numeric result as printed, e.g. 142 or 4.00; null when not a number or printed with < or >"
     )
     value_text: Text = Field(
         None, description="The result when it is not a plain number, e.g. Negative, Yellow, Clear, or < 24 with its sign"
@@ -1547,7 +1651,7 @@ class HealthReport(ExtractedDetails):
         "The sample collection date was not found; set collection_date so the results join their trends."
     )
 
-    lab_name: Text = Field(None, description="Diagnostic lab or provider, e.g. Tata 1mg Labs, Thyrocare")
+    lab_name: Text = Field(None, description="Diagnostic lab or provider, e.g. Thyrocare, Dr Lal PathLabs")
     patient_name: Text = None
     patient_age: Text = Field(None, description="Age as printed, e.g. 31 Yrs or 31Y 3M 17D")
     patient_gender: Choice("male", "female", "other") = None
@@ -1562,7 +1666,7 @@ class HealthReport(ExtractedDetails):
     collection_date: Day = Field(
         None,
         description="Required: the sample collection date, printed beside Collection Date, Collected On, or "
-        "Sample Collected, e.g. 04/Oct/2025 08:02AM; copy it as printed",
+        "Sample Collected, e.g. 12/Sep/2025 08:02AM; copy it as printed",
     )
     report_date: Day = Field(None, description="Date the report was issued")
     report_status: Choice("final", "partial", "provisional") = None
@@ -1861,11 +1965,20 @@ DOCUMENT_TYPES: dict[str, DocumentType] = {
             HealthReport,
         ),
         DocumentType(
+            "consultation_summary",
+            "Consultation summary",
+            "consultation",
+            "A doctor's consultation: outpatient or follow-up visit summary, or a prescription, with "
+            "the doctor, complaints or diagnoses, vitals, medicines ordered, tests, and follow-up.",
+            ConsultationSummary,
+        ),
+        DocumentType(
             "medical_record",
             "Medical record",
             "medical",
-            "Medical or fitness certificate, prescription, discharge summary, or hospital bill; "
-            "a lab report of test results is a health_report.",
+            "Medical or fitness certificate, discharge summary, or hospital bill; a lab report of "
+            "test results is a health_report, and a doctor's visit summary or prescription a "
+            "consultation_summary.",
             MedicalRecord,
         ),
         DocumentType(
@@ -1881,7 +1994,7 @@ DOCUMENT_TYPES: dict[str, DocumentType] = {
 DocTypeName = Literal[tuple(DOCUMENT_TYPES)]  # type: ignore[valid-type]
 
 # Bump when a schema changes so start_reanalysis re-extracts documents stored under an older one.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def document_type(key: str) -> DocumentType:
