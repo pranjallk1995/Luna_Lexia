@@ -10,6 +10,9 @@ export type Section = "view" | "favorites" | "hidden";
 
 export type DocumentRecord = {
   name: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+  document_date?: string | null;
   title?: string | null;
   summary?: string | null;
   tags?: string[] | null;

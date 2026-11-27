@@ -622,6 +622,7 @@ question -> embedding + full-text query -> cosine similarity and text rank -> fu
 
 ### Browse and read
 
+- **Web UI:** the **Sort** menu beside the search box orders the library by similarity (the default), when documents were added, their own date, title, file name, type, file size, or page count; the browser remembers the choice.
 - `sort_documents` - arrange the library: `order="similarity"` saves an order where neighbors are about alike things, by the cosine similarity of the mean of each document's passage embeddings, and new documents are slotted in beside their closest match; `order="newest"` clears it.
 - `list_documents` - visible documents in the saved order or newest first, filterable by `doc_types` and `financial_year`, with `include_preview` for a sheet of first pages.
 - `search_documents` - full-text search over filenames, titles, issuers, summaries, tags, and the parsed page text (including OCR), with tag, type, and year filters.
