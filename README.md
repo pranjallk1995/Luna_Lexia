@@ -715,6 +715,121 @@ elapsed time, and the file being read), retries failed files, and retries
 locked PDFs with a password. Its **Gmail** tab connects Gmail, previews a search,
 and imports what it finds, with recent jobs shown the same way. It accepts PDFs, photos, and Word and Excel files.
 
+## Data model
+
+### Database diagram
+
+Each person's schema (`u_<id>` in the `lunalexia` database) holds these tables, drawn from the live database. Lines are foreign keys; a table without one is joined by value (a name, a date, an ID kept as text). `PK` marks primary keys, `FK` foreign keys, `UK` unique columns.
+
+```mermaid
+erDiagram
+    document_chunks {
+        int8 chunk_id PK
+        uuid document_id FK, UK
+        int4 chunk_index UK
+        int4 page
+        text content
+        bpchar source_md5
+        text embedding_model
+        vector embedding
+        tsvector search_vector
+    }
+    document_metadata {
+        text name PK
+        uuid document_id
+        int8 size_bytes
+        bpchar content_sha256
+        text file_format
+        int4 page_count
+        text doc_type
+        text title
+        text summary
+        text_array tags
+        float4 confidence
+        jsonb extracted
+        text extraction_error
+        text_array review_flags
+        text financial_year
+        date document_date
+        text issuer
+        float8 primary_amount
+        text_array page_texts
+        text parser
+        text analysis_model
+        int4 schema_version
+        timestamptz created_at
+        timestamptz updated_at
+        tsvector search_vector
+        bool hidden
+        bool favorite
+        text public_url
+        int4 showcase_rank
+    }
+    document_passwords {
+        int8 password_id PK
+        text label
+        text doc_type
+        text encrypted_password
+        timestamptz created_at
+        timestamptz last_worked_at
+        int4 times_worked
+    }
+    drive_connection {
+        bool singleton PK
+        text email
+        text encrypted_refresh_token
+        timestamptz connected_at
+    }
+    gmail_connection {
+        bool singleton PK
+        text email
+        text encrypted_refresh_token
+        timestamptz connected_at
+    }
+    import_items {
+        int8 item_id PK
+        uuid job_id FK
+        text source
+        text source_id
+        text content_md5
+        text name
+        text path
+        text outcome
+        text document_name
+        text error
+        timestamptz created_at
+        int4 position
+    }
+    import_jobs {
+        uuid job_id PK
+        text kind
+        text source
+        text status
+        int4 total
+        text error
+        timestamptz created_at
+        timestamptz started_at
+        timestamptz finished_at
+        jsonb request
+        text current_item
+        timestamptz current_started_at
+    }
+    lab_tests {
+        text test_key PK
+        text test_name
+        text about
+        text source
+        timestamptz updated_at
+    }
+    vault_config {
+        bool singleton PK
+        text public_base_url
+        timestamptz updated_at
+    }
+    import_jobs ||--o{ import_items : "job_id"
+    document_metadata ||--o{ document_chunks : "document_id"
+```
+
 ## Project structure
 
 Lexia follows the shared Luna layout (see the Visia README):
